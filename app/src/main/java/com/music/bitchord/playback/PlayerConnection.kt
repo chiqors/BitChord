@@ -23,6 +23,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
+import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
@@ -760,15 +761,20 @@ suspend fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
     // played out of order — see [QueueShuffle]. The track the user picked still
     // leads, so it ends up at the top instead of at [startIndex].
     val shuffled = QueueShuffle.enabled.value
-    val items = withContext(Dispatchers.Default) {
-        val queue = if (shuffled) {
-            QueueShuffle.startingOrder(songs, startIndex.coerceIn(songs.indices))
+    val (items, playIndex) = withContext(Dispatchers.Default) {
+        val validIndex = startIndex.coerceIn(songs.indices)
+        val (queue, idx) = if (shuffled) {
+            QueueShuffle.startingOrder(songs, validIndex) to 0
         } else {
-            songs
+            songs to validIndex
         }
-        queue.map { it.toMediaItem() }
+        // Give the chosen track and upcoming track an immediate background head start
+        queue.getOrNull(idx)?.videoId?.let { StreamResolver.warm(it) }
+        queue.getOrNull(idx + 1)?.videoId?.let { StreamResolver.warm(it) }
+
+        queue.map { it.toMediaItem() } to idx
     }
-    setMediaItems(items, queueStartIndex(startIndex, items.size, shuffled), 0L)
+    setMediaItems(items, playIndex, 0L)
     prepare()
     play()
 }

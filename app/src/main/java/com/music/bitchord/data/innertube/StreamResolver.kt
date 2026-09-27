@@ -5,6 +5,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.SourceRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -13,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -292,6 +294,18 @@ object StreamResolver {
      * YouTube counterpart resolved.
      */
     fun loudnessDbFor(videoId: String): Double? = loudness[videoId]
+
+    /**
+     * Proactively starts resolving [videoId] in the background so that its URL
+     * and formats are ready in [recent] ahead of playback.
+     */
+    fun warm(videoId: String) {
+        if (videoId.isBlank() || SourceRegistry.parseTrackKey(videoId) != null) return
+        if (recent.containsKey(videoId)) return
+        resolverScope.launch {
+            runCatching { resolve(videoId) }
+        }
+    }
 
     /**
      * A track this app cannot play, for a reason that will read the same in ten
@@ -811,7 +825,7 @@ object StreamResolver {
             .build()
     }
 
-    private const val PROBE_TIMEOUT_SECONDS = 6L
+    private const val PROBE_TIMEOUT_SECONDS = 3L
 
     /** Where googlevideo stops authorising some clients' URLs (InnerTubeX: "CDN 403 after 1 MiB"). */
     private const val AUTH_BOUNDARY_BYTES = 1024L * 1024

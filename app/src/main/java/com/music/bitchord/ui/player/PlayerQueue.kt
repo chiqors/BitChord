@@ -764,11 +764,9 @@ private fun InlineQueueRow(
             )
         }
         if (isCurrent) {
-            Icon(
-                Icons.Rounded.GraphicEq,
-                contentDescription = stringResource(R.string.now_playing),
-                tint = Color.White,
+            com.music.bitchord.ui.components.ExpressivePlayingEqualizer(
                 modifier = Modifier.size(18.dp),
+                tint = Color.White,
             )
             Spacer(Modifier.width(10.dp))
         }

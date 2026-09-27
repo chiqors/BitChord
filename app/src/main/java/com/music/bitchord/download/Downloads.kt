@@ -175,9 +175,10 @@ object Downloads {
      *   one of many. Carried no further than [DownloadSession], which is the
      *   only thing that has to say *why* forty tracks are in the queue.
      */
-    fun enqueue(context: Context, song: Song, from: String? = null) {
+    fun enqueue(context: Context, song: Song, from: String? = null, forceAllowMobile: Boolean = false) {
         val id = song.videoId
-        if (!AppSettings.downloadsAllowedNow) {
+        val allowed = forceAllowMobile || AppSettings.downloadsAllowedNow
+        if (!allowed) {
             // Distinct from the duplicate-tap no-op below: nothing is in flight
             // here to leave alone, and a refusal nobody is told about reads as a
             // dead button. A download already queued or running started on a
@@ -197,15 +198,18 @@ object Downloads {
         DownloadSession.queued(song, from)
 
         val app = context.applicationContext
-        runCatching {
+        val started = runCatching {
             ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
-        }.onFailure {
-            // Refused only when the app has no window and no exemption, which
-            // means the queue has nothing to drain it and would sit there
-            // looking accepted forever.
+            true
+        }.getOrElse {
             Log.w(TAG, "could not start the download service: ${it.message}")
-            synchronized(lock) { pending.remove(id) }
-            fail(id, "Downloads can't start right now")
+            false
+        }
+
+        if (!started) {
+            // Foreground service could not start (e.g. app in background or Android 14+ FGS launch restriction).
+            // Dispatch a WorkManager worker to safely drain the queue in the background.
+            DownloadQueueWorker.enqueue(app)
         }
     }
 

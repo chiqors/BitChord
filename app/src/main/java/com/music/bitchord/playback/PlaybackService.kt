@@ -918,6 +918,7 @@ class PlaybackService : MediaLibraryService() {
             loadAutoplayForCurrentTrack()
             loadLyricsForCurrentTrack()
             if (exoPlayer.isPlaying) startLyricsTicker()
+            if (exoPlayer.playWhenReady) prefetchAround(exoPlayer)
             refreshCustomLayouts()
         }
 
@@ -1528,6 +1529,7 @@ class PlaybackService : MediaLibraryService() {
         applyOutputRoute()
 
         AppSettings.audioSessionId.value = exoPlayer.audioSessionId
+        AudioEffectsManager.attachSession(exoPlayer.audioSessionId, applicationContext)
         applySettings(exoPlayer)
         applySettings(sparePlayer)
         observeSettings()
@@ -6202,6 +6204,7 @@ class PlaybackService : MediaLibraryService() {
         // is not a reason to leave either behind.
         spare?.release()
         spare = null
+        AudioEffectsManager.release()
         AudioOutputStatus.reset()
         NerdStats.forgetLastSession()
         super.onDestroy()

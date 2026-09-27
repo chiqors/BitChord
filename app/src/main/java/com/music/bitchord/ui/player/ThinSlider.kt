@@ -6,6 +6,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -34,18 +35,24 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.PI
+import kotlin.math.min
+import kotlin.math.sin
 import kotlinx.coroutines.delay
 
 /**
- * Apple Music's scrubber: a hairline capsule with no thumb knob, which
- * thickens under your finger and settles back when you let go. Material's
- * Slider can't be shaped like this — it always draws a thumb and a tall
- * track — so this is drawn directly.
+ * Material 3 squiggly line slider for track progress and volume control.
+ * Features an undulating sinusoidal wave while playing, seamlessly smoothing
+ * flat on pause or drag.
  */
 @Composable
 fun ThinSlider(
@@ -68,16 +75,18 @@ fun ThinSlider(
     loading: Boolean = false,
     /**
      * Span of the track, as fractions of its duration, that the next Automix
-     * transition is planned to occupy. Drawn as a brighter stretch of the
-     * unplayed bar so the mix is visible before it arrives.
+     * transition is planned to occupy.
      */
     transitionWindow: ClosedFloatingPointRange<Float>? = null,
-    idleHeight: Dp = 7.dp,
-    activeHeight: Dp = 12.dp,
+    idleHeight: Dp = 6.dp,
+    activeHeight: Dp = 10.dp,
     activeColor: Color = Color.White.copy(alpha = 0.92f),
     inactiveColor: Color = Color.White.copy(alpha = 0.26f),
-    /** Halfway between the two track colours: visible against unplayed, invisible under played. */
     markerColor: Color = Color.White.copy(alpha = 0.5f),
+    /** Whether to render the signature Google Material 3 squiggly wave. */
+    squiggly: Boolean = true,
+    /** True when music is currently playing, driving the squiggly wave oscillation. */
+    isPlaying: Boolean = true,
 ) {
     var dragging by remember { mutableStateOf(false) }
     val height by animateDpAsState(
@@ -118,14 +127,43 @@ fun ThinSlider(
         label = "fillFactor",
     )
 
+    // Undulating wave phase animation
+    val infiniteTransition = rememberInfiniteTransition(label = "squigglyPhase")
+    val wavePhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2 * PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "wavePhase",
+    )
+
+    // Wave amplitude smooth transition: wavy while playing, straightens smoothly when paused or dragged
+    val targetWaveAmplitude = if (squiggly && isPlaying && !dragging) 3.5.dp else 0.dp
+    val waveAmplitude by animateDpAsState(
+        targetValue = targetWaveAmplitude,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "waveAmp",
+    )
+
+    // Tactile thumb scale: expands dynamically when dragging/scrubbing
+    val thumbScale by animateFloatAsState(
+        targetValue = if (dragging) 1.28f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "thumbScale",
+    )
+
     Box(
         modifier = modifier
             .fillMaxWidth()
-            // Generous invisible touch target — the visible bar is only ~7dp.
-            .height(activeHeight + 22.dp)
-            // One gesture loop for both taps and drags. Two separate detectors
-            // — a drag one plus a tap one — meant taps never landed: the drag
-            // detector took the pointer and a tap has no drag to report.
+            .height(activeHeight + 24.dp)
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -154,50 +192,91 @@ fun ThinSlider(
         Canvas(
             Modifier
                 .fillMaxWidth()
-                .height(height),
+                .height(height + 16.dp),
         ) {
-            val radius = CornerRadius(size.height / 2f)
-            drawRoundRect(color = inactiveColor, cornerRadius = radius)
-            // Between the two track colours, and drawn *under* the played fill:
-            // once the playhead reaches the window the transition is no longer
-            // upcoming, and the ordinary progress colour taking it over is what
-            // says so.
+            val trackStroke = height.toPx()
+            val centerY = size.height / 2f
+            val radius = CornerRadius(trackStroke / 2f)
+
+            // Inactive background track
+            drawRoundRect(
+                color = inactiveColor,
+                topLeft = Offset(0f, centerY - trackStroke / 2f),
+                size = Size(size.width, trackStroke),
+                cornerRadius = radius,
+            )
+
+            // Transition window marker
             transitionWindow?.let { window ->
                 val from = size.width * window.start.coerceIn(0f, 1f)
                 val to = size.width * window.endInclusive.coerceIn(0f, 1f)
                 if (to > from) {
                     drawRoundRect(
                         color = markerColor,
-                        topLeft = Offset(from, 0f),
-                        size = Size(to - from, size.height),
+                        topLeft = Offset(from, centerY - trackStroke / 2f),
+                        size = Size(to - from, trackStroke),
                         cornerRadius = radius,
                     )
                 }
             }
-            // Scaled by [fillFactor]: retracted to nothing while the sheen
-            // runs (two white signals on one bar would read as progress
-            // fighting the wait) and slid back in when the switch lands. The
-            // capsule's minimum width rides the same factor, so the nub at
-            // zero progress retires with the fill instead of sitting as a
-            // dot under the sheen.
             val filled = size.width * value.coerceIn(0f, 1f) * fillFactor
+            val ampPx = waveAmplitude.toPx() * fillFactor
+
             if (filled > 0f) {
-                drawRoundRect(
-                    color = activeColor,
-                    size = Size(
-                        filled.coerceAtLeast(size.height * fillFactor).coerceAtMost(size.width),
-                        size.height,
-                    ),
-                    cornerRadius = radius,
-                )
+                if (ampPx > 0.05f) {
+                    // Draw squiggly sine wave along played portion with organic damping
+                    val waveLengthPx = 24.dp.toPx()
+                    val dampDistance = 16.dp.toPx()
+                    val wavePath = Path()
+                    wavePath.moveTo(0f, centerY)
+
+                    val stepPx = 2.dp.toPx()
+                    var x = 0f
+                    while (x <= filled) {
+                        val startDamp = (x / dampDistance).coerceIn(0f, 1f)
+                        val endDamp = ((filled - x) / dampDistance).coerceIn(0f, 1f)
+                        val damp = min(startDamp, endDamp)
+                        val y = centerY + sin((x / waveLengthPx) * 2f * PI.toFloat() - wavePhase) * ampPx * damp
+                        wavePath.lineTo(x, y)
+                        x += stepPx
+                    }
+                    wavePath.lineTo(filled, centerY)
+
+                    drawPath(
+                        path = wavePath,
+                        color = activeColor,
+                        style = Stroke(
+                            width = trackStroke,
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round,
+                        ),
+                    )
+                } else {
+                    // Smooth flat active track when paused or straight
+                    drawRoundRect(
+                        color = activeColor,
+                        topLeft = Offset(0f, centerY - trackStroke / 2f),
+                        size = Size(
+                            filled.coerceAtLeast(size.height * fillFactor).coerceAtMost(size.width),
+                            trackStroke,
+                        ),
+                        cornerRadius = radius,
+                    )
+                }
+
+                // Material 3 Expressive tactile thumb capsule at playhead
+                val thumbWidth = (trackStroke * 0.95f * thumbScale * fillFactor).coerceAtLeast(5.dp.toPx() * fillFactor)
+                val thumbHeight = (trackStroke * 1.55f * thumbScale * fillFactor).coerceAtLeast(14.dp.toPx() * fillFactor)
+                if (thumbWidth > 0f && thumbHeight > 0f) {
+                    drawRoundRect(
+                        color = activeColor,
+                        topLeft = Offset(filled - thumbWidth / 2f, centerY - thumbHeight / 2f),
+                        size = Size(thumbWidth, thumbHeight),
+                        cornerRadius = CornerRadius(thumbWidth / 2f),
+                    )
+                }
             }
         }
-        // Composed only while switching, rather than drawn inside the Canvas
-        // above: the sheen runs an infinite animation for as long as it
-        // exists, so the cheap way to stop it costing anything is for it not
-        // to exist. AnimatedVisibility keeps it through the fade, so the bar
-        // settles back into an ordinary scrubber instead of blinking out on
-        // the frame the switch lands.
         AnimatedVisibility(
             visible = shownLoading,
             // Grown out of the bar's own left end — where the progress fill

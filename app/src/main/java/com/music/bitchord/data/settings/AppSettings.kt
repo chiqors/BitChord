@@ -40,37 +40,15 @@ enum class AudioQuality(
     LOSSLESS(Int.MAX_VALUE, "Lossless", "Your addons + JioSaavn, bit-exact where available", "300+ MB/hr"),
     ;
 
-    /**
-     * Whether a stream started under this ceiling may be served by [kind].
-     *
-     * Asked per stream rather than written into
-     * [SourceConfig.enabled][com.music.bitchord.data.sources.SourceConfig.enabled],
-     * which is what this used to do — an `applyQualityPreset` call flipped the
-     * module and JioSaavn switches the moment a rung was picked. Two things
-     * were wrong with that and both were reported together: picking a rung for
-     * *mobile data* turned the sources off while sitting on Wi-Fi, and nothing
-     * turned them back on when the connection changed, so a Wi-Fi ceiling of
-     * Lossless still had no lossless source to reach. A ceiling is a property
-     * of the connection in force; the switches on the Sources screen are the
-     * user's standing choice. Storing the first in the second lost the second.
-     *
-     * [SourceKind.YOUTUBE] is permitted on every rung: it is what [maxKbps]
-     * caps, and it is the only source that can answer at all when the ones
-     * above it are skipped.
-     */
-    fun permits(kind: SourceKind): Boolean = when (this) {
+    fun permits(kind: com.music.bitchord.data.sources.SourceKind): Boolean = when (this) {
         LOSSLESS -> true
-        // No lossless answer is wanted here, and a source that can serve one is
-        // the slow half of the list: an addon fronting several catalogues walks
-        // all of them before it answers, which is seconds spent to land on a
-        // transcode JioSaavn already has at 320.
         HIGH -> !kind.canServeLossless
-        MEDIUM, LOW -> kind == SourceKind.YOUTUBE
+        MEDIUM, LOW -> kind == com.music.bitchord.data.sources.SourceKind.YOUTUBE
     }
 }
 
 /**
- * PCM format requested from Media3's AudioTrack sink.
+ * PCM format negotiated with Android's audio track.
  *
  * FLOAT_32 is not a cosmetic "hi-res" switch: it makes Media3 convert
  * high-resolution integer PCM to IEEE-754 float and configure AudioTrack for
@@ -264,6 +242,12 @@ object AppSettings {
      * not one portable audio file.
      */
     val exportDownloads = MutableStateFlow(false)
+
+    /** YouTube Music Smart Downloads (Offline Mixtape auto-downloading). */
+    val smartDownloads = MutableStateFlow(true)
+    val smartDownloadsQuota = MutableStateFlow(100)
+    val smartDownloadsOverMobile = MutableStateFlow(true)
+    private var appContext: Context? = null
 
     /** Whether the active network charges for data. `null` while offline. */
     val meteredConnection = MutableStateFlow<Boolean?>(null)
@@ -512,18 +496,8 @@ object AppSettings {
      * Puts v1.5's backdrop back on the player: four quantised blobs drifting
      * behind the whole screen, rather than the artwork's own colours hung off
      * the sleeve's bottom edge.
-     *
-     * Off by default, because the current backdrop replaced it for two reasons
-     * that have not gone away — see [ArtworkMesh][com.music.bitchord.ui.player.ArtworkMesh]
-     * for the colour one (a cover that is nine-tenths black with a red stripe
-     * comes back from the quantiser as a red screen) and
-     * [ArtworkMeshBackdrop][com.music.bitchord.ui.player.ArtworkMeshBackdrop]
-     * for the cost one (blobs that drift are a full-screen blur redrawn while
-     * they move, where a mesh is drawn once per track and then composited).
-     * Kept as a switch because people asked for the old look back, and neither
-     * reason is one a listener has to agree with.
      */
-    val legacyMeshGradient = MutableStateFlow(false)
+    val legacyMeshGradient = MutableStateFlow(true)
 
     /** Restores the expanded player to the surface the listener left open. */
     val lastPlayerScreen = MutableStateFlow(LastPlayerScreen.MAIN)
@@ -783,10 +757,13 @@ object AppSettings {
      * one here was a measurable slice of cold start.
      */
     fun init(context: Context, authStore: AuthStore) {
+        appContext = context.applicationContext
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
         this.authStore = authStore
         readAll()
         watchConnection(context)
+        com.music.bitchord.download.smart.SmartDownloadStore.init(context)
+        scheduleSmartDownloads(context)
     }
 
     /**
@@ -817,6 +794,9 @@ object AppSettings {
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
+        smartDownloads.value = prefs.getBoolean(KEY_SMART_DOWNLOADS, true)
+        smartDownloadsQuota.value = prefs.getInt(KEY_SMART_DOWNLOADS_QUOTA, 100)
+        smartDownloadsOverMobile.value = prefs.getBoolean(KEY_SMART_DOWNLOADS_OVER_MOBILE, true)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
         automixPerformanceMode.value = runCatching {
@@ -880,7 +860,7 @@ object AppSettings {
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
-        legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
+        legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, true)
         lastPlayerScreen.value = runCatching {
             LastPlayerScreen.valueOf(
                 prefs.getString(KEY_LAST_PLAYER_SCREEN, null) ?: LastPlayerScreen.MAIN.name,
@@ -1099,6 +1079,40 @@ object AppSettings {
     fun setWifiOnlyDownloads(value: Boolean) {
         wifiOnlyDownloads.value = value
         prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
+    }
+
+    fun setSmartDownloads(value: Boolean) {
+        smartDownloads.value = value
+        prefs.edit().putBoolean(KEY_SMART_DOWNLOADS, value).apply()
+        appContext?.let { scheduleSmartDownloads(it) }
+    }
+
+    fun setSmartDownloadsQuota(value: Int) {
+        val clamped = value.coerceIn(10, 500)
+        smartDownloadsQuota.value = clamped
+        prefs.edit().putInt(KEY_SMART_DOWNLOADS_QUOTA, clamped).apply()
+        appContext?.let { scheduleSmartDownloads(it) }
+    }
+
+    fun setSmartDownloadsOverMobile(value: Boolean) {
+        smartDownloadsOverMobile.value = value
+        prefs.edit().putBoolean(KEY_SMART_DOWNLOADS_OVER_MOBILE, value).apply()
+        appContext?.let { scheduleSmartDownloads(it) }
+    }
+
+    fun scheduleSmartDownloads(context: Context) {
+        com.music.bitchord.download.smart.SmartDownloadWorker.schedule(
+            context = context,
+            enabled = smartDownloads.value,
+            allowMobile = smartDownloadsOverMobile.value,
+        )
+    }
+
+    fun triggerSmartDownloadsNow(context: Context) {
+        com.music.bitchord.download.smart.SmartDownloadWorker.triggerNow(
+            context = context,
+            allowMobile = smartDownloadsOverMobile.value,
+        )
     }
 
     fun setCrossfadeSeconds(value: Int) {
@@ -1934,6 +1948,9 @@ object AppSettings {
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
+    private const val KEY_SMART_DOWNLOADS = "smart_downloads"
+    private const val KEY_SMART_DOWNLOADS_QUOTA = "smart_downloads_quota"
+    private const val KEY_SMART_DOWNLOADS_OVER_MOBILE = "smart_downloads_over_mobile"
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"

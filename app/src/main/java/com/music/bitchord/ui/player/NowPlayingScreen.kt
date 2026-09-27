@@ -1526,6 +1526,7 @@ fun NowPlayingScreen(
                                     ?.let { it.start..it.end },
                                 onScrub = onScrub,
                                 onScrubFinished = onScrubFinished,
+                                isPlaying = isPlaying,
                             ) {
                                 PlaybackQualityLabel(
                                     song = song,
@@ -1674,6 +1675,7 @@ fun NowPlayingScreen(
             MeshGradientBackground(
                 palette = rememberArtworkColors(remoteArt, canvasFrame),
                 trackKey = song.videoId,
+                continuous = true,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
         } else if (!tabletArtworkBackdrop && !spotifyCanvasPresentation) {
@@ -2908,6 +2910,7 @@ fun NowPlayingScreen(
                     ?.let { it.start..it.end },
                 onScrub = onScrub,
                 onScrubFinished = onScrubFinished,
+                isPlaying = isPlaying,
             ) {
                 PlaybackQualityLabel(
                     song = song,
