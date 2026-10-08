@@ -169,6 +169,9 @@ val analysisNativeDir = layout.buildDirectory.dir("native/$targetOs")
 /** The tiny Windows frame bridge is independent of the optional analyser and SMTC libraries. */
 val windowNativeDir = layout.buildDirectory.dir("native-window/$targetOs")
 
+/** macOS MediaPlayer bridge for Control Center, lock screen, and media keys. */
+val nowPlayingNativeDir = layout.buildDirectory.dir("native-nowplaying/$targetOs")
+
 /**
  * Whether this build is producing the analyser for a platform that is not the one running the
  * build.
@@ -355,14 +358,40 @@ val buildWindowNative by tasks.registering {
     }
 }
 
+val buildNowPlayingNative by tasks.registering {
+    val source = project.file("native/nowplaying")
+    val outputDir = nowPlayingNativeDir.get().asFile
+    inputs.dir(source)
+    inputs.property("target", targetOs)
+    outputs.dir(outputDir)
+    onlyIf { targetOs == "macos" && hostIsMac }
+    doLast {
+        outputDir.mkdirs()
+        val javaHome = System.getProperty("java.home")
+        providers.exec {
+            commandLine(
+                "xcrun", "clang++", "-std=c++17", "-fobjc-arc", "-dynamiclib", "-O2",
+                "-I$javaHome/include", "-I$javaHome/include/darwin",
+                source.resolve("nowplaying.mm").absolutePath,
+                "-framework", "Foundation", "-framework", "MediaPlayer", "-framework", "AppKit",
+                "-o", outputDir.resolve("libbitchord_nowplaying.dylib").absolutePath,
+            )
+        }.result.get().assertNormalExitValue()
+    }
+}
+
 tasks.named<ProcessResources>("processResources") {
-    dependsOn(buildAnalysisNative, buildWindowNative)
+    dependsOn(buildAnalysisNative, buildWindowNative, buildNowPlayingNative)
     from(analysisNativeDir) {
         include("*.so", "*.dll", "*.dylib")
         into("native")
     }
     from(windowNativeDir) {
         include("*.dll")
+        into("native")
+    }
+    from(nowPlayingNativeDir) {
+        include("*.dylib")
         into("native")
     }
     // The Automix models, taken from the Android module rather than copied into this one.

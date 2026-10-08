@@ -1637,6 +1637,24 @@ fun BitChordDesktopApp() {
         )
         onDispose { DesktopWindowsMedia.stop() }
     }
+    DisposableEffect(playbackEngine) {
+        DesktopMacMedia.start(
+            DesktopMacMedia.Controller(
+                onPlay = ::playFromUser,
+                onPause = ::pauseFromUser,
+                onToggle = ::togglePlayPauseFromUser,
+                onNext = ::playNext,
+                onPrevious = ::playPrevious,
+                onSeek = { positionMs ->
+                    if (!DesktopListenTogether.state.value.controlsLocked) {
+                        playbackEngine.seekTo(positionMs)
+                        partySync.onLocalIntent()
+                    }
+                },
+            ),
+        )
+        onDispose { DesktopMacMedia.stop() }
+    }
 
     LaunchedEffect(playbackSpeed) { playbackEngine.setPlaybackSpeed(playbackSpeed) }
     LaunchedEffect(volume) { playbackEngine.setVolume(volume) }
@@ -1732,13 +1750,14 @@ fun BitChordDesktopApp() {
     // The shared player reads the playhead off this one object, and only where it
     // draws it — see PlaybackPosition — so a tick never recomposes the player.
     val playerPosition = remember { PlaybackPosition() }
-    LaunchedEffect(playbackEngine) {
+    LaunchedEffect(playbackEngine, playbackSpeed) {
         playbackEngine.state.collect {
             // The audio thread's own timestamp, not this collector's: it runs on the UI thread and
             // gets to a reading as late as the UI is busy.
             playerPosition.report(it.positionMs, it.positionSampledAtNanos)
             playerPosition.seeks = it.seeks
             playerPosition.advancing = !it.awaitingAudio
+            DesktopMacMedia.publish(it, playbackSpeed)
         }
     }
 
@@ -2382,6 +2401,7 @@ fun BitChordDesktopApp() {
                 // WASAPI and WinRT, and exitProcess would unload those libraries under them.
                 playbackEngine.shutdown()
                 DesktopWindowsMedia.stop()
+                DesktopMacMedia.stop()
                 exitProcess(0)
             },
         )
