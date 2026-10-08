@@ -59,6 +59,7 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
     val reportFrame by rememberUpdatedState(spec.onFrameCaptured)
     val reportCover by rememberUpdatedState(spec.onCoverChanged)
     val presentationAlpha by rememberUpdatedState(spec.presentationAlpha)
+    val playbackPosition by rememberUpdatedState(spec.playbackPositionMs)
 
     LaunchedEffect(canvas) {
         // Round and round for as long as the clip is mounted: a canvas is a few
@@ -69,13 +70,26 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
             val opened = withContext(Dispatchers.IO) {
                 var last: Result<Unit> = Result.failure(IllegalStateException("the clip could not be fetched"))
                 for (candidate in listOfNotNull(canvas.url, canvas.fallbackUrl)) {
-                    val source = if (isManifest(candidate)) {
+                    val direct = runCatching { java.net.URI(candidate).host?.endsWith("googlevideo.com") == true }
+                        .getOrDefault(false)
+                    val source = if (isManifest(candidate) || direct) {
                         candidate
                     } else {
                         DesktopCanvasCache.fileFor(candidate)?.toAbsolutePath()?.toString() ?: continue
                     }
-                    last = decoder.open(source)
-                    if (last.isSuccess) break
+                    val headers = if (direct) {
+                        com.music.bitchord.data.innertube.StreamResolver.mediaHeadersFor(candidate)
+                    } else {
+                        emptyMap()
+                    }
+                    last = decoder.open(source, headers)
+                    if (last.isSuccess) {
+                        // The player may be reopened while the audio track is
+                        // already part-way through; start the visual stream at
+                        // the same playhead before its first frame is shown.
+                        decoder.seek(playbackPosition)
+                        break
+                    }
                 }
                 last
             }
@@ -89,19 +103,31 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
             try {
                 val pixels = ByteArray(decoder.width * decoder.height * 4)
                 val info = ImageInfo.makeN32(decoder.width, decoder.height, ColorAlphaType.OPAQUE)
+                var lastTargetPositionMs = playbackPosition
                 while (isActive) {
                     // Paused with the track, or for the length of the sleeve's
                     // collapse: the last frame stays up, nothing is decoded.
                     snapshotFlow { running }.first { it }
-                    val started = System.currentTimeMillis()
+                    val target = playbackPosition
+                    // Keep all FFmpeg calls on this loop. A separate seek coroutine can race
+                    // with av_read_frame/avcodec_receive_frame and corrupt the decoder state.
+                    if (kotlin.math.abs(target - lastTargetPositionMs) >= 1_500L) {
+                        withContext(Dispatchers.IO) { decoder.seek(target) }
+                    }
+                    lastTargetPositionMs = target
                     val decoded = withContext(Dispatchers.IO) { decoder.nextFrame(pixels) }
                     if (!decoded) break
+                    val delta = decoder.positionMs - target
+                    // Drop frames that are already behind the audio clock. If
+                    // decoding gets ahead, hold the current frame until audio
+                    // reaches it. This makes the audio playhead the clock,
+                    // rather than wall-clock decode speed.
+                    if (delta < -120L) continue
+                    if (delta > 120L) delay(delta.coerceAtMost(250L))
                     shown++
                     // Handed to Skia rather than copied, so the next frame
                     // cannot be decoded into the same array.
                     frame = Image.makeRaster(info, pixels.copyOf(), decoder.width * 4).toComposeImageBitmap()
-                    val spent = System.currentTimeMillis() - started
-                    delay((decoder.frameIntervalMillis - spent).coerceAtLeast(0L))
                 }
             } finally {
                 withContext(NonCancellable + Dispatchers.IO) { decoder.close() }
@@ -158,6 +184,10 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
         val viewAspect = size.width / size.height
         val fit = spec.contentMode == CanvasContentMode.FIT_PORTRAIT && clipAspect < 1f
         val (drawWidth, drawHeight) = when {
+            spec.contentMode == CanvasContentMode.CROP && clipAspect > viewAspect ->
+                size.height * clipAspect to size.height
+            spec.contentMode == CanvasContentMode.CROP ->
+                size.width to size.width / clipAspect
             fit && clipAspect > viewAspect -> size.width to size.width / clipAspect
             fit -> size.height * clipAspect to size.height
             clipAspect > viewAspect -> size.height * clipAspect to size.height

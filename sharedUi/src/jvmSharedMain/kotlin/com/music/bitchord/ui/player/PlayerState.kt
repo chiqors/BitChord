@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
  * null — a miss is the normal answer.
  */
 @Composable
-internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
+internal fun rememberCanvasArtwork(song: Song, preferYouTubeVideo: Boolean = false, forceStaticArtwork: Boolean = false): CanvasArtwork? {
     val canvasEnabled by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by PlayerSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val prioritizeSpotifyCanvas by PlayerSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
@@ -55,8 +55,19 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
     // clean; the same-titled-impostor case is guarded where the clip is
     // adopted, by [CanvasArtwork.matches].
     var canvas by remember(song.title, song.artist) { mutableStateOf<CanvasArtwork?>(null) }
-    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas) {
-        if (!canvasAllowedNow) {
+    LaunchedEffect(song.videoId, song.isVideo, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas, preferYouTubeVideo, forceStaticArtwork) {
+        if (forceStaticArtwork) {
+            canvas = null
+            return@LaunchedEffect
+        }
+        if (preferYouTubeVideo && song.isVideo) {
+            canvas = PlayerPlatform.host.videoFor(song)?.let { url ->
+                CanvasArtwork(url = url, videoId = song.videoId, title = song.title,
+                    artist = song.artist, album = song.albumName)
+            }
+            return@LaunchedEffect
+        }
+        if (!canvasAllowedNow && !song.isVideo) {
             canvas = null
             return@LaunchedEffect
         }
@@ -69,7 +80,7 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
         // what is playing: [CanvasArtwork.matches] is what stops a preserved
         // clip from being a different song's that happens to share a title.
         canvas = PlayerPlatform.host.cachedCanvas(song)
-            ?: canvas?.takeIf { it.matches(song.title, song.artist, song.albumName) }
+            ?: canvas?.takeIf { it.videoId == null && it.matches(song.title, song.artist, song.albumName) }
 
         // The album name is looked up separately and lands a moment after the
         // player opens, and it is the field that makes the catalogue searches
@@ -78,12 +89,24 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
         // with no album, or a lookup that failed — the search still goes out,
         // just a beat later, which is imperceptible for decoration.
         if (canvas == null && song.albumName == null) delay(ALBUM_SETTLE_MS)
-        // Keep what an earlier pass found if this one comes back empty, rather
-        // than pulling a playing clip out from under itself.
+        // Animated artwork has a strict priority: Spotify Canvas, then Apple's
+        // motion artwork. Only after both providers miss does a YTM video row
+        // use its YouTube stream. Ordinary YTM tracks finish at static art.
         canvas = PlayerPlatform.host.canvasFor(song) ?: canvas
+        if (canvas == null && song.isVideo) {
+            canvas = PlayerPlatform.host.videoFor(song)?.let { url ->
+                CanvasArtwork(
+                    url = url,
+                    videoId = song.videoId,
+                    title = song.title,
+                    artist = song.artist,
+                    album = song.albumName,
+                )
+            }
+        }
     }
 
-    return canvas
+    return if (forceStaticArtwork) null else canvas
 }
 
 /**
@@ -313,4 +336,3 @@ internal fun rememberPlayerVolume(): PlayerVolume {
 
     return volume
 }
-

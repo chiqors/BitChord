@@ -84,6 +84,9 @@ object DesktopSearchClient {
 
     suspend fun trackLinks(videoId: String): Result<Song> = YtMusicRepository.trackLinks(videoId)
 
+    /** Finds YouTube's music-video rendition for an audio catalogue track. */
+    suspend fun videoVersion(song: Song): Song? = YtMusicRepository.resolveVideo(song)
+
     suspend fun library(): Result<LibraryPage> = YtMusicRepository.library()
 
     /** Follows Liked Music's pages past the first, handing each page's ids over as it lands. */

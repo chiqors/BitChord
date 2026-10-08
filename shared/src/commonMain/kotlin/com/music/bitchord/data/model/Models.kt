@@ -399,6 +399,8 @@ data class ShelfItem(
     val thumbnailUrl: String?,
     val videoId: String?,
     val browseId: String?,
+    /** Whether the playable card came from YouTube Music's video rendition. */
+    val isVideo: Boolean = false,
 )
 
 /** The signed-in Google account, as YouTube Music reports it. */

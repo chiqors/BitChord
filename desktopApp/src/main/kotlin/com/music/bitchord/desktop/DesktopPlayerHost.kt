@@ -58,8 +58,14 @@ internal object DesktopPlayerHost : PlayerHost {
     override suspend fun canvasFor(song: Song): CanvasArtwork? =
         withContext(Dispatchers.IO) { DesktopCanvasClient.lookup(song) }?.toShared()
 
+    override suspend fun videoFor(song: Song): String? =
+        song.videoId
+
     @Composable
-    override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = DesktopCanvasVideo(spec, modifier)
+    override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
+        if (spec.canvas.videoId != null) DesktopNativeVideo(spec, modifier)
+        else DesktopCanvasVideo(spec, modifier)
+    }
 
     // Local files carry their art on the row already; there is no remote store to ask.
     @Composable

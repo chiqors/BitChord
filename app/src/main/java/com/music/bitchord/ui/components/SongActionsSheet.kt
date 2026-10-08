@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbDownOffAlt
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -177,6 +178,9 @@ fun SongActionsSheet(
     onToggleAudioVersion: (() -> Unit)? = null,
     /** Which cut is playing now, so the row can offer the other one. */
     isAudioVersion: Boolean = false,
+    /** Shows or hides the video surface without changing the playing rendition. */
+    onToggleVideoPresentation: (() -> Unit)? = null,
+    videoPresentationVisible: Boolean = true,
     onShare: (() -> Unit)? = null,
     /**
      * Copies what the app logged while starting this track. Null everywhere
@@ -236,7 +240,7 @@ fun SongActionsSheet(
         // a substituted copy, the other for a track held on YouTube's own —
         // and between them they are the whole of the choice, which is why they
         // sit in the same place under the same divider.
-        if (onRollbackToOriginal != null || onUpgradeQuality != null || onToggleAudioVersion != null) {
+        if (onRollbackToOriginal != null || onUpgradeQuality != null || onToggleAudioVersion != null || onToggleVideoPresentation != null) {
             (onRollbackToOriginal ?: onUpgradeQuality)?.let {
                 ActionRow(
                     icon = if (onRollbackToOriginal != null) {
@@ -264,6 +268,16 @@ fun SongActionsSheet(
                     icon = if (isAudioVersion) Icons.Rounded.Videocam else BitChordIcons.MusicNote,
                     label = stringResource(
                         if (isAudioVersion) R.string.convert_to_video else R.string.convert_to_audio,
+                    ),
+                    accent = palette.accent,
+                    onClick = it,
+                )
+            }
+            onToggleVideoPresentation?.let {
+                ActionRow(
+                    icon = if (videoPresentationVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Videocam,
+                    label = stringResource(
+                        if (videoPresentationVisible) R.string.show_static_artwork else R.string.show_video,
                     ),
                     accent = palette.accent,
                     onClick = it,

@@ -75,11 +75,9 @@ data class DesktopCanvasArtwork(
 }
 
 /**
- * The four providers, asked in turn until one answers with a clip that is really this track's.
- *
- * Apple and Tidal first because their clips are square and belong to the release; the community
- * index next because it is the only one covering back catalogue; Spotify last because it is the
- * one that needs a credential.
+ * The animated artwork providers, asked in priority order. Spotify Canvas is the preferred
+ * rendition, followed by Apple's release motion artwork. YouTube video playback is handled by
+ * the player as a later fallback for YTM video rows; ordinary YTM tracks end at static artwork.
  */
 object DesktopCanvasClient {
 
@@ -124,10 +122,8 @@ object DesktopCanvasClient {
         // the late arrival look like a different question.
         return resolve("song|${song.videoId}", album != null) {
             firstHit(
-                { DesktopAppleMusicCanvas.search(title, artist, album) },
-                { DesktopTidalCanvas.search(title, artist, album) },
-                { DesktopCommunityCanvas.search(title, artist, album) },
                 { DesktopSpotifyCanvas.search(title, artist, album) },
+                { DesktopAppleMusicCanvas.search(title, artist, album) },
             ) { it.matches(title, artist, album) }
         }
     }
@@ -148,10 +144,8 @@ object DesktopCanvasClient {
         if (name.isBlank() || credit.isBlank()) return null
         return resolve("album|$name|$credit", withAlbum = true) {
             firstHit(
-                { DesktopAppleMusicCanvas.searchAlbum(name, credit) },
-                { DesktopTidalCanvas.searchAlbum(name, credit) },
-                { DesktopCommunityCanvas.searchAlbum(name, credit) },
                 { DesktopSpotifyCanvas.searchAlbum(name, credit) },
+                { DesktopAppleMusicCanvas.searchAlbum(name, credit) },
             ) { it.matches(name, credit, name) }
         }
     }

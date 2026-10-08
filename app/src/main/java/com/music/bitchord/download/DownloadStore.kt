@@ -152,15 +152,17 @@ object DownloadStore {
         if (!AppSettings.exportDownloads.value) {
             privateFile(context, name).takeIf { it.exists() }?.let(Uri::fromFile)
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            mediaStoreEntry(context, name)
+            mediaStoreEntry(context, name, name.endsWith(".mp4", ignoreCase = true))
         } else {
             legacyFile(name).takeIf { it.exists() }?.let(Uri::fromFile)
         }
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun mediaStoreEntry(context: Context, name: String): Uri? = runCatching {
+    private fun mediaStoreEntry(context: Context, name: String, video: Boolean): Uri? = runCatching {
+        val collection = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         context.contentResolver.query(
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            collection,
             arrayOf(MediaStore.MediaColumns._ID),
             "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND " +
                 "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
@@ -168,7 +170,7 @@ object DownloadStore {
             null,
         )?.use { cursor ->
             if (!cursor.moveToFirst()) return@use null
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI.buildUpon()
+            collection.buildUpon()
                 .appendPath(cursor.getLong(0).toString())
                 .build()
         }
@@ -286,8 +288,13 @@ object DownloadStore {
             // [storable] or from the stream resolver, so landing in this branch
             // means one of those two is wrong about this device — worth saying
             // in those words the first time it happens again.
+            val collection = if (name.endsWith(".mp4", ignoreCase = true)) {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            } else {
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            }
             val uri = runCatching {
-                context.contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+                context.contentResolver.insert(collection, values)
             }.getOrElse { cause ->
                 Log.w(TAG, "the media store refused $mimeType for $name: ${cause.message}")
                 error("Android won't store ${name.substringAfterLast('.', mimeType)} files in Music")

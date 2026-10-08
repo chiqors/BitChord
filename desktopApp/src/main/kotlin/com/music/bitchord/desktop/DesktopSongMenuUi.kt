@@ -64,6 +64,8 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.OndemandVideo
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
@@ -93,6 +95,8 @@ internal data class DesktopSongActions(
     val onSleepTimer: (Int?) -> Unit,
     val onSleepAfterTrack: () -> Unit,
     val onShare: (Song) -> Unit,
+    val onSwitchRendition: ((Boolean) -> Unit)?,
+    val videoVisible: Boolean,
 )
 
 /**
@@ -235,6 +239,8 @@ internal fun DesktopSongMenuFor(
         onSearchLyrics = onSearchLyrics,
         lyricsOffsetMs = lyricsOffsetMs,
         onSetLyricsOffset = onSetLyricsOffset,
+        onSwitchRendition = actions.onSwitchRendition?.let { switch -> { video -> switch(video); close() } },
+        videoVisible = actions.videoVisible,
         onDismiss = close,
     )
 }
@@ -283,6 +289,8 @@ internal fun DesktopSongMenu(
     /** The player's lyrics offset and its setter; a null setter hides the "Lyrics offset" row. */
     lyricsOffsetMs: Int = 0,
     onSetLyricsOffset: ((Int) -> Unit)? = null,
+    onSwitchRendition: ((Boolean) -> Unit)? = null,
+    videoVisible: Boolean = false,
     onDismiss: () -> Unit,
 ) {
     var pickingSleepTimer by remember { mutableStateOf(false) }
@@ -359,6 +367,15 @@ internal fun DesktopSongMenu(
                 DesktopMenuRow(Icons.Rounded.Bedtime, DesktopStrings["d_turn_off", "Turn off"]) { onSleepTimer(null) }
             }
             return@DesktopMenuSurface
+        }
+
+        onSwitchRendition?.let { switch ->
+            DesktopMenuRow(
+                icon = if (videoVisible) Icons.Rounded.MusicNote else Icons.Rounded.OndemandVideo,
+                label = if (videoVisible) "Show static artwork" else "Show video",
+                onClick = { switch(!videoVisible) },
+            )
+            DesktopMenuDivider()
         }
 
         // The two are never both offered.

@@ -26,6 +26,8 @@ enum class CanvasSource { SPOTIFY, OTHER }
 data class CanvasArtwork(
     val url: String,
     val fallbackUrl: String? = null,
+    /** YouTube id when this artwork is backed by an embedded YouTube player. */
+    val videoId: String? = null,
     val title: String? = null,
     val artist: String? = null,
     val album: String? = null,
