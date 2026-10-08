@@ -650,6 +650,9 @@ fun NowPlayingScreen(
     /** A version switch (video vs audio-only), triggered from the player's
      * menu, is fetching and measuring the target cut. */
     audioVersionSwitching: Boolean,
+    /** An explicit Video tab selection overrides decorative motion artwork. */
+    preferYouTubeVideo: Boolean = false,
+    forceStaticArtwork: Boolean = false,
     /** The player has just swapped this item to a higher-quality source. */
     qualityUpgraded: Boolean,
     queue: List<Song>,
@@ -792,7 +795,7 @@ fun NowPlayingScreen(
     // track" check lives.
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
-    val canvas = rememberCanvasArtwork(song)
+    val canvas = rememberCanvasArtwork(song, preferYouTubeVideo, forceStaticArtwork)
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and
@@ -1211,7 +1214,9 @@ fun NowPlayingScreen(
     // still-art full-bleed preference. Other providers and static artwork keep
     // answering to that preference exactly as before.
     val heroMode = spotifyCanvasOnPhone ||
-        (fullBleedArt && playerFillsWindow(windowWidth))
+        (fullBleedArt && playerFillsWindow(windowWidth)) ||
+        song.isVideo
+    val youtubeVideoActive = song.isVideo && !forceStaticArtwork
 
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
@@ -1762,6 +1767,7 @@ fun NowPlayingScreen(
 
         Box(modifier = modifier.fillMaxSize().then(dockHost)) {
             LandscapePlayerLayout(
+                artworkAspectRatio = if (canvas?.videoId != null) 16f / 9f else 1f,
                 pane = when {
                     lyricsOpen -> PlayerPane.Lyrics
                     queueOpen -> PlayerPane.Queue
@@ -1780,6 +1786,7 @@ fun NowPlayingScreen(
                         canvas = canvas,
                         canvasRendered = canvasRendered,
                         isPlaying = isPlaying,
+                        playbackPositionMs = position.positionMs,
                         onCanvasRenderedChange = { canvasRendered = it },
                         // A clip decoding behind a player on its way to the
                         // bar is work nobody sees — see [dockMoving].
@@ -2089,6 +2096,7 @@ fun NowPlayingScreen(
                 CanvasArtworkPlayer(
                     canvas = clip,
                     isPlaying = isPlaying,
+                    playbackPositionMs = position.positionMs,
                     // Paused for the whole collapse into the queue/lyrics panel
                     // and back, not just once it hands off to the still frame at
                     // p >= 0.5 — see [CanvasArtworkPlayer.pausedForTransition].
@@ -2102,7 +2110,7 @@ fun NowPlayingScreen(
                     // Spotify's 9:16 Canvas is the phone background, so it
                     // covers every edge. Other providers retain the contained
                     // portrait treatment introduced for motion cover art.
-                    contentMode = if (clipFullscreen) {
+                    contentMode = if (clipFullscreen || song.isVideo) {
                         CanvasContentMode.CROP
                     } else {
                         CanvasContentMode.FIT_PORTRAIT
@@ -2934,7 +2942,9 @@ fun NowPlayingScreen(
                                 shape = TileShape
                                 clip = share > 0f
                             }
-                            .background(Color.Black.copy(alpha = 0.18f)),
+                            .background(
+                                if (youtubeVideoActive) Color.Transparent else Color.Black.copy(alpha = 0.18f),
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (!art.loaded && !canvasRendered) {
@@ -2989,8 +2999,17 @@ fun NowPlayingScreen(
                         // [PlayerArtwork.loaded] still flips the moment it does.
                         modifier = Modifier
                             .fillMaxSize()
-                            .drawWithContent { if (art.loaded || !canvasRendered) drawContent() },
+                            .drawWithContent {
+                                if (!youtubeVideoActive && (art.loaded || !canvasRendered)) drawContent()
+                            },
                     )
+
+                    if (youtubeVideoActive && heroMode && heroHeight > 0.dp) {
+                        PlayerPlatform.host.YouTubeVideo(
+                            song = song,
+                            modifier = Modifier.fillMaxSize().zIndex(3f),
+                        )
+                    }
 
                     // Where the clip plays when it can't have the banner:
                     // inside the same clip as the still art, taking the
@@ -3000,6 +3019,7 @@ fun NowPlayingScreen(
                             CanvasArtworkPlayer(
                                 canvas = canvas,
                                 isPlaying = isPlaying,
+                                playbackPositionMs = position.positionMs,
                                 // The panels first: a collapse the tap asked
                                 // for is paused from the tap, and then never
                                 // asks after its first frame of movement.

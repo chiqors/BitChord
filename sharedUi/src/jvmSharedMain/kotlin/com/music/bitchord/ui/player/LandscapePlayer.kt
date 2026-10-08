@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
@@ -145,6 +146,8 @@ internal fun LandscapePlayerLayout(
     mainPane: @Composable (compact: Boolean) -> Unit,
     lyricsPane: @Composable () -> Unit,
     queuePane: @Composable () -> Unit,
+    /** Square for album art; widescreen for a video track. */
+    artworkAspectRatio: Float = 1f,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -186,7 +189,17 @@ internal fun LandscapePlayerLayout(
                             .fillMaxWidth(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        artwork(Modifier.size(minOf(maxWidth, maxHeight)))
+                        val artworkWidth = if (artworkAspectRatio > 1f) {
+                            minOf(maxWidth, maxHeight * artworkAspectRatio)
+                        } else {
+                            minOf(maxWidth, maxHeight)
+                        }
+                        artwork(
+                            Modifier
+                                .width(artworkWidth)
+                                .aspectRatio(artworkAspectRatio)
+                                .then(if (artworkAspectRatio <= 1f) Modifier.height(artworkWidth) else Modifier),
+                        )
                     }
                     Spacer(Modifier.height(if (compact) 12.dp else 24.dp))
                     actions()
@@ -276,6 +289,7 @@ internal fun LandscapeArtwork(
     canvas: CanvasArtwork?,
     canvasRendered: Boolean,
     isPlaying: Boolean,
+    playbackPositionMs: Long = 0L,
     onCanvasRenderedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     /** Halts the clip for a transition — see [CanvasArtworkPlayer]'s own. */
@@ -336,6 +350,7 @@ internal fun LandscapeArtwork(
                 CanvasArtworkPlayer(
                     canvas = clip,
                     isPlaying = isPlaying,
+                    playbackPositionMs = playbackPositionMs,
                     pausedForTransition = pausedForTransition,
                     onRenderedChanged = onCanvasRenderedChange,
                     modifier = Modifier.fillMaxSize(),

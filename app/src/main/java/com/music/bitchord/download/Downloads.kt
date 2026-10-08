@@ -576,6 +576,7 @@ object Downloads {
             uri = uri.toString(),
             downloadFormat = downloadFormat,
             dateAddedSeconds = dateAddedSeconds,
+            isVideo = fetched.isVideo,
         )
         val metaFetched = SavedSongMetadata(
             videoId = fetched.videoId,
@@ -587,6 +588,7 @@ object Downloads {
             uri = uri.toString(),
             downloadFormat = downloadFormat,
             dateAddedSeconds = dateAddedSeconds,
+            isVideo = fetched.isVideo,
         )
         record(
             saved = { it + ids.associateWith { id -> uri.toString() } },
@@ -666,6 +668,8 @@ object Downloads {
                         downloadFormat = downloadFormat,
                         localDateAddedSeconds = dateAddedSeconds,
                         localDateModifiedSeconds = dateModifiedSeconds,
+                        isVideo = meta.isVideo,
+                        isVideoOrigin = meta.isVideo,
                     )
                 )
             } else {
@@ -745,6 +749,8 @@ object Downloads {
                     downloadFormat = meta.downloadFormat ?: legacyYoutubeDownloadBadge(context, uri),
                     localDateAddedSeconds = dateAddedSeconds,
                     localDateModifiedSeconds = dateModifiedSeconds,
+                    isVideo = meta.isVideo,
+                    isVideoOrigin = meta.isVideo,
                 )
             }
         }
@@ -872,7 +878,14 @@ object Downloads {
         // Downloads preserve the exact item the listener picked. Catalogue
         // matching is a manual playback action and must not silently change a
         // download or its filename.
-        val track = song
+        val track = if (song.isVideo && !AppSettings.downloadYouTubeVideo.value) {
+            // The listener asked for the video row, but chose an audio-only
+            // offline copy to save storage. Keep the same YouTube id while
+            // changing the persisted presentation to static artwork.
+            song.copy(isVideo = false, isVideoOrigin = false)
+        } else {
+            song
+        }
         // Read once, here, for the whole of this track. Both routes below
         // and the re-resolve inside [Downloader.fetch] have to agree on
         // which rung they are fetching, and re-reading the setting per call
@@ -1093,6 +1106,23 @@ object Downloads {
      *   a mid-download refusal and has to ask for the same rung it started on.
      */
     private suspend fun routeFor(context: Context, track: Song, quality: DownloadQuality): Route {
+        if (track.isVideo) {
+            val url = StreamResolver.resolveVideo(
+                videoId = track.videoId,
+                maxHeight = AppSettings.videoQuality.value.maxHeight,
+                requireAudio = true,
+            )
+            return Route(
+                extension = "mp4",
+                mimeType = "video/mp4",
+                describe = "YouTube video (up to ${AppSettings.videoQuality.value.label})",
+                downloadFormat = "YouTube video",
+                taggable = false,
+                write = { sink, onProgress ->
+                    Downloader.fetchDirect(url, StreamResolver.mediaHeadersFor(url), sink, onProgress)
+                },
+            )
+        }
         fromSources(track, quality)?.let { (stream, storable) ->
             // A manifest is an index, not audio. Whichever kind it is, fetching
             // it as a file writes the index into something named `.flac` —
@@ -1344,6 +1374,7 @@ internal data class SavedSongMetadata(
     val downloadFormat: String? = null,
     /** Stable creation time for downloads that MediaStore does not index. */
     val dateAddedSeconds: Long? = null,
+    val isVideo: Boolean = false,
 )
 
 /**

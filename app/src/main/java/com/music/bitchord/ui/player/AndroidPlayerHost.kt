@@ -8,9 +8,16 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.widget.Toast
+import android.view.LayoutInflater
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.session.MediaController
+import androidx.media3.ui.PlayerView
+import com.music.bitchord.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
@@ -47,6 +54,13 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     private val app = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val main = Handler(Looper.getMainLooper())
+
+    private var mediaController by mutableStateOf<MediaController?>(null)
+
+    /** Binds the surface to the service-owned player; no second player is created. */
+    fun bindMediaController(controller: MediaController?) {
+        mediaController = controller
+    }
 
     override val settings: PlayerSettingsSource = object : PlayerSettingsSource {
         override val animatedCanvas get() = AppSettings.animatedCanvas
@@ -87,6 +101,33 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = AndroidCanvasVideo(spec, modifier)
+
+    @Composable
+    override fun YouTubeVideo(song: Song, modifier: Modifier) {
+        val controller = mediaController
+        AndroidView(
+            modifier = modifier,
+            factory = { context ->
+                (LayoutInflater.from(context).inflate(R.layout.view_video_player, null, false) as PlayerView).apply {
+                    useController = false
+                    useArtwork = false
+                    artworkDisplayMode = androidx.media3.ui.PlayerView.ARTWORK_DISPLAY_MODE_OFF
+                    resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    setKeepContentOnPlayerReset(true)
+                    setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    elevation = 2f
+                    player = controller
+                    bringToFront()
+                }
+            },
+            update = { view ->
+                // Detaching the surface hides video while playback and its
+                // position continue uninterrupted in the service.
+                view.player = mediaController
+                view.bringToFront()
+            },
+        )
+    }
 
     @Composable
     override fun rememberRemoteArtworkUrl(song: Song?): String? =

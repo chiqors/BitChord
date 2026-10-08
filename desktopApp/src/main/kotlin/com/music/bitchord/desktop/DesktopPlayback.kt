@@ -59,6 +59,18 @@ data class DesktopPlaybackState(
         com.music.bitchord.data.settings.SmartAnalysis(),
 )
 
+enum class DesktopVideoQuality(val maxHeight: Int, val label: String) {
+    P1080(1080, "1080p"),
+    P720(720, "720p"),
+    P480(480, "480p"),
+    P360(360, "360p"),
+}
+
+internal object DesktopVideoSettings {
+    @Volatile
+    var quality: DesktopVideoQuality = DesktopVideoQuality.P1080
+}
+
 internal data class DesktopStream(
     val url: String,
     val format: DesktopStreamFormat = DesktopStreamFormat(),
@@ -196,6 +208,13 @@ internal object DesktopStreamClient {
     }
 
     suspend fun resolveUrl(song: Song): Result<String> = resolve(song).map(DesktopStream::url)
+
+    /** Resolves the progressive video rendition used by the desktop player for video rows. */
+    suspend fun resolveVideoUrl(song: Song, maxHeight: Int = 1080): Result<String> = runCatching {
+        StreamResolver.resolveVideo(song.videoId, maxHeight)
+    }.onFailure {
+        DesktopTrackLog.log("  youtube: video resolve failed for '${song.title}': ${it.message}")
+    }
 
     /**
      * The ceiling a resolve on this thread was asked for, read by

@@ -229,6 +229,9 @@ fun SettingsScreen(
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
+    val showYouTubeVideo by AppSettings.showYouTubeVideo.collectAsStateWithLifecycle()
+    val downloadYouTubeVideo by AppSettings.downloadYouTubeVideo.collectAsStateWithLifecycle()
+    val videoQuality by AppSettings.videoQuality.collectAsStateWithLifecycle()
     val smartVersionAlignment by AppSettings.smartVersionAlignment.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
@@ -271,6 +274,7 @@ fun SettingsScreen(
     var searchQuery by remember { mutableStateOf("") }
     var picking by remember { mutableStateOf<QualityTarget?>(null) }
     var pickingDownloadQuality by remember { mutableStateOf(false) }
+    var pickingVideoQuality by remember { mutableStateOf(false) }
     var pickingAutomixPerformance by remember { mutableStateOf(false) }
     // What the last export or import did, shown on the row that did it rather
     // than as a toast: a backup is the one action here whose outcome nobody can
@@ -553,6 +557,53 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setPreferMusicOnly(!preferMusicOnly) },
+                )
+            }
+            val videoPresentationTitle = stringResource(R.string.video_presentation)
+            row(videoPresentationTitle, "video", "artwork", "youtube") {
+                SettingsRow(
+                    icon = Icons.Rounded.SmartDisplay,
+                    title = videoPresentationTitle,
+                    subtitle = stringResource(R.string.video_presentation_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = showYouTubeVideo,
+                            onCheckedChange = AppSettings::setShowYouTubeVideo,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setShowYouTubeVideo(!showYouTubeVideo) },
+                )
+            }
+            val videoQualityTitle = stringResource(R.string.video_quality)
+            row(videoQualityTitle, "1080p", "720p", "480p", "360p") {
+                SettingsRow(
+                    icon = Icons.Rounded.SmartDisplay,
+                    title = videoQualityTitle,
+                    subtitle = videoQuality.label,
+                    value = videoQuality.label,
+                    onClick = { pickingVideoQuality = true },
+                )
+            }
+            row("Download YouTube videos", "download", "video", "storage") {
+                SettingsRow(
+                    icon = Icons.Rounded.Download,
+                    title = "Download YouTube videos",
+                    subtitle = "Save video playback for offline use",
+                    trailing = {
+                        Switch(
+                            checked = downloadYouTubeVideo,
+                            onCheckedChange = AppSettings::setDownloadYouTubeVideo,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setDownloadYouTubeVideo(!downloadYouTubeVideo) },
                 )
             }
             val outputPrecisionTitle = stringResource(R.string.output_precision)
@@ -1470,6 +1521,21 @@ fun SettingsScreen(
         }
     }
 
+    if (pickingVideoQuality) {
+        ModalBottomSheet(
+            onDismissRequest = { pickingVideoQuality = false },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            VideoQualitySheet(
+                selected = videoQuality,
+                onSelect = {
+                    AppSettings.setVideoQuality(it)
+                    pickingVideoQuality = false
+                },
+            )
+        }
+    }
+
     if (pickingAutomixPerformance) {
         ModalBottomSheet(
             onDismissRequest = { pickingAutomixPerformance = false },
@@ -2099,6 +2165,43 @@ private fun DownloadQualitySheet(
                         modifier = Modifier.size(22.dp),
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VideoQualitySheet(
+    selected: com.music.bitchord.data.settings.VideoQuality,
+    onSelect: (com.music.bitchord.data.settings.VideoQuality) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+        Row(
+            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Rounded.SmartDisplay, contentDescription = null, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(14.dp))
+            Text(
+                text = stringResource(R.string.video_quality),
+                style = MaterialTheme.typography.titleLarge,
+            )
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+        com.music.bitchord.data.settings.VideoQuality.entries.forEach { quality ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelect(quality)
+                    }
+                    .padding(horizontal = 22.dp, vertical = 15.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(quality.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                if (quality == selected) Icon(Icons.Rounded.Check, contentDescription = null)
             }
         }
     }

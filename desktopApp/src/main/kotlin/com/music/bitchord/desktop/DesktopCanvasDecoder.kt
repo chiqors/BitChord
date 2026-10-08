@@ -24,6 +24,7 @@ import org.bytedeco.ffmpeg.global.avformat.avformat_find_stream_info
 import org.bytedeco.ffmpeg.global.avformat.AVSEEK_FLAG_BACKWARD
 import org.bytedeco.ffmpeg.global.avformat.avformat_open_input
 import org.bytedeco.ffmpeg.global.avutil.AVMEDIA_TYPE_VIDEO
+import org.bytedeco.ffmpeg.global.avutil.AV_NOPTS_VALUE
 import org.bytedeco.ffmpeg.global.avutil.AV_PIX_FMT_BGRA
 import org.bytedeco.ffmpeg.global.avutil.av_dict_set
 import org.bytedeco.ffmpeg.global.avutil.av_frame_alloc
@@ -55,6 +56,11 @@ internal class DesktopCanvasDecoder {
     private var sourceWidth = 0
     private var sourceHeight = 0
     private var streamIndex = -1
+    private var streamTimeBaseNum = 1
+    private var streamTimeBaseDen = 1
+    private var streamStart = 0L
+    var positionMs: Long = 0L
+        private set
 
     /** Seconds per frame, from the stream's own rate; used to pace playback. */
     var frameIntervalMillis: Long = 40L
@@ -90,6 +96,9 @@ internal class DesktopCanvasDecoder {
         check(streamIndex >= 0) { "no video stream" }
 
         val stream = opened.streams(streamIndex)
+        streamTimeBaseNum = stream.time_base().num()
+        streamTimeBaseDen = stream.time_base().den()
+        streamStart = stream.start_time().takeIf { it != AV_NOPTS_VALUE } ?: 0L
         val parameters = stream.codecpar()
         val decoder = avcodec_find_decoder(parameters.codec_id()) ?: error("no decoder for this clip")
         val context = avcodec_alloc_context3(decoder)
@@ -135,6 +144,11 @@ internal class DesktopCanvasDecoder {
         var looped = false
         while (true) {
             if (avcodec_receive_frame(context, decoded) == 0) {
+                val stamp = decoded.best_effort_timestamp().takeIf { it != AV_NOPTS_VALUE } ?: decoded.pts()
+                if (stamp != AV_NOPTS_VALUE) {
+                    positionMs = (stamp - streamStart) * streamTimeBaseNum * 1_000L /
+                        streamTimeBaseDen.coerceAtLeast(1)
+                }
                 val converter = scalerFor(decoded.format()) ?: return false
                 sws_scale(converter, decoded.data(), decoded.linesize(), 0, sourceHeight, planes, strides)
                 // Read through an explicit NIO view rewound each time rather than through the
@@ -155,6 +169,18 @@ internal class DesktopCanvasDecoder {
             if (pkt.stream_index() == streamIndex) avcodec_send_packet(context, pkt)
             av_packet_unref(pkt)
         }
+    }
+
+    /** Seeks the visual stream to the audio playhead and discards stale decoder frames. */
+    fun seek(positionMs: Long): Boolean {
+        val container = format ?: return false
+        val context = codec ?: return false
+        val timestamp = (positionMs.coerceAtLeast(0L) * streamTimeBaseDen.toLong() /
+            (streamTimeBaseNum.coerceAtLeast(1) * 1_000L))
+            .plus(streamStart)
+        if (av_seek_frame(container, streamIndex, timestamp, AVSEEK_FLAG_BACKWARD) < 0) return false
+        avcodec_flush_buffers(context)
+        return true
     }
 
     /** The converter for the format frames are actually arriving in. */
@@ -198,6 +224,10 @@ internal class DesktopCanvasDecoder {
         planes = null
         strides = null
         streamIndex = -1
+        streamTimeBaseNum = 1
+        streamTimeBaseDen = 1
+        streamStart = 0L
+        positionMs = 0L
         sourceWidth = 0
         sourceHeight = 0
     }

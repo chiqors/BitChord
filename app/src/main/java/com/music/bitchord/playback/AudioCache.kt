@@ -389,6 +389,8 @@ object AudioCache {
             ?.let { videoId ->
                 val rendition = QualityUpgrade.cacheTag(spec.uri)
                 when {
+                    spec.uri.getQueryParameter("bitchord_video") != null ->
+                        "$videoId#video${spec.uri.getQueryParameter("bitchord_video")}"
                     rendition != null -> "$videoId#$rendition"
                     SourceResolver.canSubstituteForYouTube() -> "$videoId#alt${atmosKeySuffix()}"
                     else -> videoId

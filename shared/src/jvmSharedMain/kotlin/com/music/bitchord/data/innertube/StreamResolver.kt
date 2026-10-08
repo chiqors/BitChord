@@ -175,7 +175,11 @@ object StreamResolver {
         }
     }
 
-    private val init by lazy { NewPipe.init(OkHttpDownloader()) }
+    private val init by lazy {
+        // NewPipe's stream extractor requires its global downloader to be initialized before
+        // ServiceList.YouTube is touched. The desktop video path can be the first NewPipe caller.
+        NewPipe.init(OkHttpDownloader())
+    }
 
     /**
      * The extractor's own leash on [Http.client].
@@ -728,6 +732,35 @@ object StreamResolver {
             .onFailure { TrackLog.w(TAG, "no signature timestamp: ${it.message}") }
             .getOrNull()
             ?.also { cachedSignatureTimestamp = it }
+    }
+
+    /**
+     * Resolves a progressive YouTube video rendition for the desktop visual player.
+     *
+     * The desktop already has an FFmpeg frame decoder for Canvas clips. Reusing a
+     * progressive rendition keeps video playback in the same media stack as the
+     * rest of the app and avoids embedding a browser just to render YouTube.
+     */
+    suspend fun resolveVideo(videoId: String, maxHeight: Int = 1080, requireAudio: Boolean = false): String = extractionGate.withLock {
+        withContext(Dispatchers.IO) {
+            init
+            val extractor = ServiceList.YouTube.getStreamExtractor(
+                "https://www.youtube.com/watch?v=$videoId",
+            )
+            extractor.fetchPage()
+            val streams = (extractor.videoStreams + if (requireAudio) emptyList() else extractor.videoOnlyStreams)
+                .filter {
+                    !it.content.isNullOrBlank() &&
+                        it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
+                }
+            val stream = streams
+                .filter { it.height <= maxHeight }
+                .maxByOrNull { it.height }
+                ?: streams.minByOrNull { it.height }
+                ?: error("Video unavailable: no progressive video streams")
+            TrackLog.d(TAG, "NewPipe picked video ${stream.format?.name} @ ${stream.height}p")
+            stream.content
+        }
     }
 
     @Volatile

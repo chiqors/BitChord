@@ -58,6 +58,13 @@ enum class OutputPcmMode(val label: String) {
     FLOAT_32("32-bit float"),
 }
 
+enum class VideoQuality(val maxHeight: Int, val label: String) {
+    HIGHEST(1080, "Highest (up to 1080p)"),
+    P720(720, "720p"),
+    P480(480, "480p"),
+    P360(360, "360p"),
+}
+
 /**
  * What to keep when a track is saved to the device.
  *
@@ -383,6 +390,12 @@ object AppSettings {
      * metadata appears immediately while the catalogue match is resolved.
      */
     val preferMusicOnly = MutableStateFlow(false)
+
+    /** Shows full YouTube video surfaces for video renditions in the player. */
+    val showYouTubeVideo = MutableStateFlow(true)
+    /** Keeps video pixels when downloading a YouTube video result. */
+    val downloadYouTubeVideo = MutableStateFlow(false)
+    val videoQuality = MutableStateFlow(VideoQuality.HIGHEST)
 
     /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
     val smartVersionAlignment = MutableStateFlow(true)
@@ -831,6 +844,11 @@ object AppSettings {
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        showYouTubeVideo.value = prefs.getBoolean(KEY_SHOW_YOUTUBE_VIDEO, true)
+        downloadYouTubeVideo.value = prefs.getBoolean(KEY_DOWNLOAD_YOUTUBE_VIDEO, false)
+        videoQuality.value = runCatching {
+            VideoQuality.valueOf(prefs.getString(KEY_VIDEO_QUALITY, VideoQuality.HIGHEST.name) ?: VideoQuality.HIGHEST.name)
+        }.getOrDefault(VideoQuality.HIGHEST)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
@@ -1213,6 +1231,21 @@ object AppSettings {
     fun setPreferMusicOnly(value: Boolean) {
         preferMusicOnly.value = value
         prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
+    }
+
+    fun setShowYouTubeVideo(value: Boolean) {
+        showYouTubeVideo.value = value
+        prefs.edit().putBoolean(KEY_SHOW_YOUTUBE_VIDEO, value).apply()
+    }
+
+    fun setDownloadYouTubeVideo(value: Boolean) {
+        downloadYouTubeVideo.value = value
+        prefs.edit().putBoolean(KEY_DOWNLOAD_YOUTUBE_VIDEO, value).apply()
+    }
+
+    fun setVideoQuality(value: VideoQuality) {
+        videoQuality.value = value
+        prefs.edit().putString(KEY_VIDEO_QUALITY, value.name).apply()
     }
 
     fun setSmartVersionAlignment(value: Boolean) {
@@ -1957,6 +1990,9 @@ object AppSettings {
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
+    private const val KEY_SHOW_YOUTUBE_VIDEO = "show_youtube_video"
+    private const val KEY_DOWNLOAD_YOUTUBE_VIDEO = "download_youtube_video"
+    private const val KEY_VIDEO_QUALITY = "video_quality"
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
@@ -2029,6 +2065,3 @@ object AppSettings {
     private const val KEY_DISCORD_INFO_DISMISSED = "discord_info_dismissed"
     private const val KEY_LAST_VERSION_CODE = "last_version_code"
 }
-
-
-

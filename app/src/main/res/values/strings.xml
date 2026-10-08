@@ -261,6 +261,11 @@
     <string name="skip_silence_float_subtitle">Unavailable on 32-bit float output</string>
     <string name="prefer_music_only">Prefer music-only version</string>
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="show_video">Show video</string>
+    <string name="show_static_artwork">Show static artwork</string>
+    <string name="video_presentation">Enable YouTube video playback</string>
+    <string name="video_presentation_subtitle">Play and show YouTube videos for video music sources</string>
+    <string name="video_quality">Video quality</string>
     <string name="smart_version_alignment">Smart audio alignment</string>
     <string name="smart_version_alignment_subtitle">Analyze audio waveforms to match the exact corresponding playback moment</string>
     <string name="equalizer">Equalizer</string>

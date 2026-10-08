@@ -392,7 +392,9 @@ fun MediaItem.toSong() = Song(
     albumName = mediaMetadata.albumTitle?.toString(),
     isExplicit = mediaMetadata.extras?.takeIf { it.containsKey(EXTRA_EXPLICIT) }
         ?.getBoolean(EXTRA_EXPLICIT),
-    isVideo = mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true,
+    isVideo = mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true ||
+        mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_ORIGIN) == true ||
+        localConfiguration?.uri?.getQueryParameter("m") == "1",
     isVideoOrigin = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_ORIGIN) == true ||
         mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true,
     setVideoId = mediaMetadata.extras?.getString(EXTRA_SET_VIDEO_ID),
@@ -598,7 +600,8 @@ fun Song.toMediaItem(): MediaItem {
         // resolves it — see [SourceResolver.substituteForYouTube] — and that
         // match is made on them, which the loader thread has no other way to
         // reach.
-        else -> "bitchord://watch?v=$videoId${matchQuery()}"
+        else -> "bitchord://watch?v=$videoId${matchQuery()}" +
+            if (isVideo) "&bitchord_video=${com.music.bitchord.data.settings.AppSettings.videoQuality.value.maxHeight}" else ""
     }
     return MediaItem.Builder()
         .setMediaId(videoId)

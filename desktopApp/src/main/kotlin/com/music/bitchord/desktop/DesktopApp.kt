@@ -149,6 +149,7 @@ import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VolumeUp
@@ -576,6 +577,11 @@ fun BitChordDesktopApp() {
     var moodGenreReloads by remember { mutableStateOf(0) }
     var moodGenreShelves by remember { mutableStateOf<UiState<List<HomeShelf>>>(UiState.Loading) }
     var selectedSong by remember { mutableStateOf<Song?>(null) }
+    var defaultVideoArtwork by remember { mutableStateOf(persistence.boolean("default_video_artwork", true)) }
+    var videoVisible by remember { mutableStateOf(defaultVideoArtwork) }
+    LaunchedEffect(selectedSong?.videoId) {
+        videoVisible = selectedSong?.isVideo == true && defaultVideoArtwork
+    }
     // The live queue: what is playing, what played before it, what is next.
     var liveQueue by remember {
         mutableStateOf(
@@ -666,6 +672,15 @@ fun BitChordDesktopApp() {
     // The blob backdrop the mesh replaced, kept as an opt-out.
     var legacyMeshGradient by remember { mutableStateOf(persistence.boolean("legacy_mesh_gradient", false)) }
     var animatedCanvas by remember { mutableStateOf(persistence.boolean("animated_canvas", true)) }
+    var playVideoInsteadOfAudio by remember { mutableStateOf(persistence.boolean("play_video_instead_of_audio", false)) }
+    var downloadYouTubeVideo by remember { mutableStateOf(persistence.boolean("download_youtube_video", false)) }
+    var videoQuality by remember {
+        mutableStateOf(
+            runCatching { DesktopVideoQuality.valueOf(persistence.string("video_quality", DesktopVideoQuality.P1080.name)) }
+                .getOrDefault(DesktopVideoQuality.P1080),
+        )
+    }
+    LaunchedEffect(videoQuality) { DesktopVideoSettings.quality = videoQuality }
     var spotifyCanvasCookie by remember { mutableStateOf(DesktopSpotifyToken.cookie()) }
     var showNerdStats by remember { mutableStateOf(persistence.boolean("show_nerd_stats", false)) }
     var syncedLyrics by remember {
@@ -822,6 +837,13 @@ fun BitChordDesktopApp() {
         return true
     }
 
+    fun switchPlayerRendition(wantVideo: Boolean) {
+        val current = selectedSong ?: return
+        if (!current.isVideo || partyTrackChangeBlocked()) return
+        // mpv keeps owning audio and the clock; only the presentation changes.
+        videoVisible = wantVideo
+    }
+
     /**
      * The phone's party queue for a track picked here: that track, then what the party's members
      * queued by hand. Never the album around it, and never the last track's AutoPlay — the party
@@ -838,8 +860,22 @@ fun BitChordDesktopApp() {
     }
 
     /** A song played on its own — from a search row, a shelf card, history. */
-    fun playSong(song: Song, startPlaying: Boolean = true, source: DesktopQueueSource? = null) {
+    fun playSong(
+        song: Song,
+        startPlaying: Boolean = true,
+        source: DesktopQueueSource? = null,
+        bypassVideoPreference: Boolean = false,
+    ) {
         if (partyTrackChangeBlocked()) return
+        if (!bypassVideoPreference && playVideoInsteadOfAudio && !song.isVideo &&
+            DesktopSearchClient.isVideoId(song.videoId)
+        ) {
+            scope.launch {
+                val video = withContext(Dispatchers.IO) { DesktopSearchClient.videoVersion(song) }
+                playSong(video ?: song, startPlaying, source, bypassVideoPreference = true)
+            }
+            return
+        }
         val tapped = canonicalSong(song).withSource(source)
         val songs = if (DesktopListenTogether.state.value.inParty) {
             partyPlaybackQueue(tapped)
@@ -1912,6 +1948,11 @@ fun BitChordDesktopApp() {
         },
         onSleepAfterTrack = { DesktopSleepTimer.startAfterTrack() },
         onShare = ::shareSong,
+        onSwitchRendition = if (song.isVideo && !DesktopListenTogether.state.value.controlsLocked &&
+            song.videoId == selectedSong?.videoId && DesktopSearchClient.isVideoId(song.videoId) &&
+            song.localUri == null && song.localPath == null
+        ) { video -> switchPlayerRendition(video) } else null,
+        videoVisible = videoVisible,
     )
 
     /** The "…" a song row hangs off, built the same way on every page that offers one. */
@@ -2726,6 +2767,10 @@ fun BitChordDesktopApp() {
         },
         onSleepAfterTrack = { DesktopSleepTimer.startAfterTrack() },
         onShare = ::shareSong,
+        onSwitchRendition = if (song.isVideo && !DesktopListenTogether.state.value.controlsLocked &&
+            DesktopSearchClient.isVideoId(song.videoId) && song.localUri == null && song.localPath == null
+        ) { video -> switchPlayerRendition(video) } else null,
+        videoVisible = videoVisible,
     )
 
     // What the shared player reads as settings, kept in step with the window's own.
@@ -3063,6 +3108,8 @@ fun BitChordDesktopApp() {
                             position = playerPosition,
                             durationMs = playback.durationMs,
                             audioVersionSwitching = false,
+                            preferYouTubeVideo = current.isVideo && videoVisible,
+                            forceStaticArtwork = current.isVideo && !videoVisible,
                             qualityUpgraded = false,
                             queue = liveQueue.songs,
                             queueIndex = liveQueue.index,
@@ -3399,6 +3446,28 @@ fun BitChordDesktopApp() {
                                     listState = settingsListState,
                                     autoplay = autoplay,
                                     onAutoplayChange = ::setAutoplay,
+                                    playVideoInsteadOfAudio = playVideoInsteadOfAudio,
+                                    onPlayVideoInsteadOfAudioChange = {
+                                        playVideoInsteadOfAudio = it
+                                        persistence.saveBoolean("play_video_instead_of_audio", it)
+                                    },
+                                    videoQuality = videoQuality,
+                                    onVideoQualityChange = {
+                                        videoQuality = it
+                                        DesktopVideoSettings.quality = it
+                                        persistence.saveString("video_quality", it.name)
+                                    },
+                                    downloadYouTubeVideo = downloadYouTubeVideo,
+                                    onDownloadYouTubeVideoChange = {
+                                        downloadYouTubeVideo = it
+                                        persistence.saveBoolean("download_youtube_video", it)
+                                    },
+                                    defaultVideoArtwork = defaultVideoArtwork,
+                                    onDefaultVideoArtworkChange = {
+                                        defaultVideoArtwork = it
+                                        persistence.saveBoolean("default_video_artwork", it)
+                                        if (selectedSong?.isVideo == true) videoVisible = it
+                                    },
                                     automix = automix,
                                     onAutomixChange = {
                                         automix = it
@@ -5325,6 +5394,14 @@ private fun DesktopSettingsScreen(
     listState: LazyListState,
     autoplay: Boolean,
     onAutoplayChange: (Boolean) -> Unit,
+    playVideoInsteadOfAudio: Boolean,
+    onPlayVideoInsteadOfAudioChange: (Boolean) -> Unit,
+    videoQuality: DesktopVideoQuality,
+    onVideoQualityChange: (DesktopVideoQuality) -> Unit,
+    downloadYouTubeVideo: Boolean,
+    onDownloadYouTubeVideoChange: (Boolean) -> Unit,
+    defaultVideoArtwork: Boolean,
+    onDefaultVideoArtworkChange: (Boolean) -> Unit,
     automix: Boolean,
     onAutomixChange: (Boolean) -> Unit,
     automixPerformance: AutomixPerformanceMode,
@@ -5532,6 +5609,33 @@ private fun DesktopSettingsScreen(
                         DesktopStrings["d_keep_the_music_going_with_similar_songs", "Keep the music going with similar songs"],
                         autoplay,
                         onAutoplayChange,
+                    )
+                    SettingsToggle(
+                        "Play music videos",
+                        "Use a YouTube music-video rendition when one is available",
+                        playVideoInsteadOfAudio,
+                        onPlayVideoInsteadOfAudioChange,
+                    )
+                    SettingsToggle(
+                        "Show video artwork by default",
+                        "Keep the video visible when a YouTube video track starts",
+                        defaultVideoArtwork,
+                        onDefaultVideoArtworkChange,
+                    )
+                    SettingsRow(
+                        Icons.Rounded.Movie,
+                        "Video quality",
+                        videoQuality.label + " (falls back when unavailable)",
+                    ) {
+                        val next = DesktopVideoQuality.entries
+                            .getOrElse(videoQuality.ordinal + 1) { DesktopVideoQuality.entries.first() }
+                        onVideoQualityChange(next)
+                    }
+                    SettingsToggle(
+                        "Download YouTube videos",
+                        "Keep video playback in offline downloads",
+                        downloadYouTubeVideo,
+                        onDownloadYouTubeVideoChange,
                     )
                     SettingsToggle(
                         DesktopStrings["shuffle", "Shuffle"],

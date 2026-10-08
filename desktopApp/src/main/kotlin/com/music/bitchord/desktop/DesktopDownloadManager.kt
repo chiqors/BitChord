@@ -12,6 +12,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import com.music.bitchord.data.innertube.StreamResolver
 
 /** Downloads resolved audio into the user's own BitChord folder. */
 object DesktopDownloadManager {
@@ -27,7 +28,13 @@ object DesktopDownloadManager {
         if (job != null) activeJobs[song.videoId] = job
         return try {
             require(song.localPath == null) { "This track is already local" }
-            val stream = DesktopMusicSources.resolve(song, quality, forDownload = true).getOrThrow()
+            val downloadSong = if (song.isVideo && !DesktopPersistence().boolean("download_youtube_video", false)) {
+                song.copy(isVideo = false, isVideoOrigin = false)
+            } else song
+            if (downloadSong.isVideo) {
+                return downloadVideo(downloadSong, quality, onProgress)
+            }
+            val stream = DesktopMusicSources.resolve(downloadSong, quality, forDownload = true).getOrThrow()
             val directory = Path.of(System.getProperty("user.home"), "Music", "BitChord")
             Files.createDirectories(directory)
             val safeName = buildString {
@@ -42,7 +49,7 @@ object DesktopDownloadManager {
             val target = directory.resolve("$safeName.$extension")
             val temporary = directory.resolve(".$safeName.$extension.part")
             if (Files.isRegularFile(target) && Files.size(target) > 0L) {
-                return Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
+                return Result.success(downloadSong.copy(localUri = target.toUri().toString(), localPath = target.toString()))
             }
 
             if (manifest) {
@@ -59,7 +66,7 @@ object DesktopDownloadManager {
                 }
                 check(Files.size(temporary) > 0L) { "Download failed: nothing was sent" }
                 Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
-                return Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
+                return Result.success(downloadSong.copy(localUri = target.toUri().toString(), localPath = target.toString()))
             }
 
             val existing = if (Files.isRegularFile(temporary)) Files.size(temporary) else 0L
@@ -111,7 +118,7 @@ object DesktopDownloadManager {
             }.getOrElse {
                 Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
             }
-            Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
+            Result.success(downloadSong.copy(localUri = target.toUri().toString(), localPath = target.toString()))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
@@ -119,6 +126,71 @@ object DesktopDownloadManager {
         } finally {
             if (job != null) activeJobs.remove(song.videoId, job)
         }
+    }
+
+    private suspend fun downloadVideo(
+        song: Song,
+        quality: String,
+        onProgress: (downloaded: Long, total: Long?) -> Unit,
+    ): Result<Song> = try {
+        val height = DesktopVideoSettings.quality.maxHeight
+        val url = StreamResolver.resolveVideo(song.videoId, height, requireAudio = true)
+        val headers = StreamResolver.mediaHeadersFor(url)
+        val directory = Path.of(System.getProperty("user.home"), "Music", "BitChord")
+        Files.createDirectories(directory)
+        val safeName = buildString { append(song.artist); append(" - "); append(song.title) }
+            .replace(ILLEGAL_FILENAME, "_").trim().take(180).ifBlank { song.videoId }
+        val target = directory.resolve("$safeName.mp4")
+        val temporary = directory.resolve(".$safeName.mp4.part")
+        if (Files.isRegularFile(target) && Files.size(target) > 0L) {
+            return Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
+        }
+        var position = if (Files.isRegularFile(temporary)) Files.size(temporary) else 0L
+        var total: Long? = null
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val connection = URI(url).toURL().openConnection() as HttpURLConnection
+            connection.connectTimeout = CONNECT_TIMEOUT_MS
+            connection.readTimeout = READ_TIMEOUT_MS
+            headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+            connection.setRequestProperty("Range", "bytes=$position-${position + 2L * 1024 * 1024 - 1}")
+            try {
+                check(connection.responseCode in 200..299) { "Video download failed (HTTP ${connection.responseCode})" }
+                val contentRange = connection.getHeaderField("Content-Range")
+                total = contentRange?.substringAfterLast('/')?.toLongOrNull()
+                    ?: total ?: connection.contentLengthLong.takeIf { it > 0 }?.let { it + position }
+                if (position > 0 && connection.responseCode == HttpURLConnection.HTTP_OK) {
+                    position = 0
+                    Files.deleteIfExists(temporary)
+                }
+                Files.newOutputStream(
+                    temporary,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE,
+                    if (position > 0) StandardOpenOption.APPEND else StandardOpenOption.TRUNCATE_EXISTING,
+                ).use { output ->
+                    connection.inputStream.use { input ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var read: Int
+                        while (input.read(buffer).also { read = it } >= 0) {
+                            if (read == 0) continue
+                            currentCoroutineContext().ensureActive()
+                            output.write(buffer, 0, read)
+                            position += read
+                            onProgress(position, total)
+                        }
+                    }
+                }
+            } finally { connection.disconnect() }
+            if (total == null || position >= total) break
+        }
+        check(Files.size(temporary) > 0L) { "Video download failed: nothing was sent" }
+        Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
+        Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        Result.failure(failure)
     }
 
     fun cancel(videoId: String) {

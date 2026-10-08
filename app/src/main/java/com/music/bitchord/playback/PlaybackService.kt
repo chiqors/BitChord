@@ -1324,6 +1324,25 @@ class PlaybackService : MediaLibraryService() {
             }
             val videoId = dataSpec.uri.getQueryParameter("v")
                 ?: return@Resolver dataSpec
+            // `m=1` is the durable video marker carried by the match query;
+            // use it as a fallback in case a Media3/cache layer drops the
+            // presentation-only height parameter while preserving the item.
+            val videoHeight = dataSpec.uri.getQueryParameter("bitchord_video")?.toIntOrNull()
+                ?: dataSpec.uri.getQueryParameter("m")?.takeIf { it == "1" }
+                    ?.let { AppSettings.videoQuality.value.maxHeight }
+            if (videoHeight != null) {
+                val maxHeight = videoHeight
+                val streamUrl = runBlocking(about) {
+                    withTimeout(RESOLVE_TIMEOUT_MS) {
+                        StreamResolver.resolveVideo(videoId, maxHeight, requireAudio = true)
+                    }
+                }
+                TrackLog.d("BitChord", "serving YouTube video up to ${maxHeight}p", about = videoId)
+                return@Resolver dataSpec.buildUpon()
+                    .setUri(Uri.parse(streamUrl))
+                    .setHttpRequestHeaders(StreamResolver.mediaHeadersFor(streamUrl))
+                    .build()
+            }
             // An explicit rollback is not a preference for a different
             // candidate: it means this exact YouTube rendition, immediately.
             // Answer it before StreamChoice, the module race and a pending

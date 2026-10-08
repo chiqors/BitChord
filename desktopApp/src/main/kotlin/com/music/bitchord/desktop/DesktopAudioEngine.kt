@@ -108,6 +108,8 @@ class DesktopPlaybackEngine(
     private var resolveJob: Job? = null
     private var upgradeJob: Job? = null
     private var nextResolveJob: Job? = null
+    @Volatile private var videoSession: DesktopVideoSession? = null
+    @Volatile private var videoGeneration = 0L
 
     @Volatile private var playbackSpeed = 1f
     @Volatile private var volume = 1f
@@ -189,6 +191,14 @@ class DesktopPlaybackEngine(
     // ---- the surface the application uses -------------------------------
 
     fun load(song: Song, playWhenReady: Boolean = true, startAtMs: Long = 0L) {
+        videoGeneration++
+        videoSession?.close()
+        videoSession = null
+        DesktopVideoPlayback.publish(null)
+        if (song.isVideo) {
+            loadVideo(song, playWhenReady, startAtMs)
+            return
+        }
         retryingSongId = null
         loadInternal(
             song,
@@ -196,6 +206,51 @@ class DesktopPlaybackEngine(
             excludedSourceId = refusedSources[song.videoId],
             startAtMs = startAtMs.coerceAtLeast(0L),
         )
+    }
+
+    private fun loadVideo(song: Song, playWhenReady: Boolean, startAtMs: Long) {
+        resolveJob?.cancel()
+        nextResolveJob?.cancel()
+        upgradeJob?.cancel()
+        paused = true
+        commands += Command.Flush
+        val generation = videoGeneration
+        _state.value = DesktopPlaybackState(song = song, volume = volume, isLoading = true, isPlaying = playWhenReady)
+        resolveJob = scope.launch {
+            var session: DesktopVideoSession? = null
+            try {
+                val local = song.localPath?.takeIf { java.nio.file.Files.isRegularFile(java.nio.file.Path.of(it)) }
+                    ?: song.localUri?.takeIf { it.startsWith("file:") }
+                        ?.let { runCatching { java.nio.file.Paths.get(java.net.URI(it)).toString() }.getOrNull() }
+                val video = local?.let { java.io.File(it).toURI().toString() }
+                    ?: DesktopStreamClient.resolveVideoUrl(song, DesktopVideoSettings.quality.maxHeight).getOrThrow()
+                val audio = if (local == null) DesktopStreamClient.resolve(song).getOrThrow() else null
+                if (generation != videoGeneration) return@launch
+                session = DesktopVideoSession(
+                    video, audio?.url, audio?.headers ?: emptyMap(), startAtMs, _state.value.isPlaying, volume, playbackSpeed,
+                    onPosition = { position, duration, playing, buffering ->
+                        if (generation == videoGeneration) _state.update {
+                            it.copy(positionMs = position, durationMs = duration, isPlaying = playing,
+                                isLoading = buffering, awaitingAudio = buffering, positionSampledAtNanos = System.nanoTime())
+                        }
+                    },
+                    onEnded = { if (generation == videoGeneration) scope.launch { onEnded() } },
+                    onError = { error -> if (generation == videoGeneration) _state.update {
+                        it.copy(isPlaying = false, isLoading = false, error = "Video playback failed: $error")
+                    } },
+                )
+                if (generation != videoGeneration) { session.close(); return@launch }
+                videoSession = session
+                DesktopVideoPlayback.publish(session.frames)
+                _state.update { it.copy(isLoading = false, streamSourceId = "youtube", streamFormat = audio?.format) }
+            } catch (failure: Throwable) {
+                session?.close()
+                DesktopTrackLog.log("video playback failed for '${song.title}': ${failure.stackTraceToString()}")
+                if (generation == videoGeneration) _state.update {
+                    it.copy(isPlaying = false, isLoading = false, error = failure.message ?: "Video playback failed")
+                }
+            }
+        }
     }
 
     /**
@@ -413,20 +468,40 @@ class DesktopPlaybackEngine(
     }
 
     fun togglePlayPause() {
+        if (_state.value.song?.isVideo == true) {
+            if (_state.value.isPlaying) pause() else play()
+            return
+        }
         if (paused) play() else pause()
     }
 
     fun play() {
+        if (_state.value.song?.isVideo == true) {
+            videoSession?.play(true)
+            _state.update { it.copy(isPlaying = true) }
+            return
+        }
         paused = false
         _state.update { it.copy(isPlaying = true) }
     }
 
     fun pause() {
+        if (_state.value.song?.isVideo == true) {
+            videoSession?.play(false)
+            _state.update { it.copy(isPlaying = false) }
+            return
+        }
         paused = true
         _state.update { it.copy(isPlaying = false) }
     }
 
     fun seekTo(positionMs: Long) {
+        videoSession?.let {
+            it.seek(positionMs)
+            _state.update { state -> state.copy(positionMs = positionMs.coerceAtLeast(0),
+                positionSampledAtNanos = System.nanoTime(), seeks = state.seeks + 1) }
+            return
+        }
         // TEMP seek diagnostics: who asked, so a seek undone by a second one shows up.
         DesktopTrackLog.log(
             "seek requested: ${positionMs}ms (at ${_state.value.positionMs}ms) from " +
@@ -437,10 +512,12 @@ class DesktopPlaybackEngine(
 
     fun setPlaybackSpeed(speed: Float) {
         playbackSpeed = speed.coerceIn(0.25f, 3.0f)
+        videoSession?.speed(playbackSpeed)
     }
 
     fun setVolume(value: Float) {
         volume = value.coerceIn(0f, 1f)
+        videoSession?.volume(volume)
         sink.gain = volume
         _state.update { it.copy(volume = volume) }
     }
@@ -463,6 +540,11 @@ class DesktopPlaybackEngine(
 
     /** Resolves and prepares the next queue item without starting it. */
     fun prepareNext(song: Song?) {
+        if (_state.value.song?.isVideo == true || song?.isVideo == true) {
+            nextResolveJob?.cancel()
+            clearUpcoming()
+            return
+        }
         // Past the midpoint of a blend the player already shows the incoming song, and the app
         // answers that by asking for the track *after* it — which would clear the upcoming track
         // this blend is still playing. Held until the blend ends, and then carried out.
@@ -609,6 +691,10 @@ class DesktopPlaybackEngine(
     }
 
     fun release() {
+        videoGeneration++
+        videoSession?.close()
+        videoSession = null
+        DesktopVideoPlayback.publish(null)
         analyzer.release()
         running.set(false)
         resolveJob?.cancel()
