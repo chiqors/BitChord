@@ -12,6 +12,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import com.music.bitchord.data.innertube.StreamResolver
+import okhttp3.Request
 
 /** Downloads resolved audio into the user's own BitChord folder. */
 object DesktopDownloadManager {
@@ -145,17 +146,21 @@ object DesktopDownloadManager {
         var total: Long? = null
         while (true) {
             currentCoroutineContext().ensureActive()
-            val connection = URI(url).toURL().openConnection() as HttpURLConnection
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
-            connection.setRequestProperty("Range", "bytes=$position-${position + 2L * 1024 * 1024 - 1}")
-            try {
-                check(connection.responseCode in 200..299) { "Video download failed (HTTP ${connection.responseCode})" }
-                val contentRange = connection.getHeaderField("Content-Range")
+            val end = position + 2L * 1024 * 1024 - 1
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", DOWNLOAD_USER_AGENT)
+                // Raw bytes, so the length and Range offsets are the file's own.
+                .header("Accept-Encoding", "identity")
+                .apply { headers.forEach { (name, value) -> header(name, value) } }
+                .header("Range", "bytes=$position-$end")
+                .build()
+            DesktopDownloadHttp.client.newCall(request).execute().use { response ->
+                check(response.isSuccessful) { "Video download failed (HTTP ${response.code})" }
+                val contentRange = response.header("Content-Range")
                 total = contentRange?.substringAfterLast('/')?.toLongOrNull()
-                    ?: total ?: connection.contentLengthLong.takeIf { it > 0 }?.let { it + position }
-                if (position > 0 && connection.responseCode == HttpURLConnection.HTTP_OK) {
+                    ?: total ?: response.body.contentLength().takeIf { it > 0 }?.let { it + position }
+                if (position > 0 && response.code == HTTP_OK) {
                     position = 0
                     Files.deleteIfExists(temporary)
                 }
@@ -165,7 +170,7 @@ object DesktopDownloadManager {
                     StandardOpenOption.WRITE,
                     if (position > 0) StandardOpenOption.APPEND else StandardOpenOption.TRUNCATE_EXISTING,
                 ).use { output ->
-                    connection.inputStream.use { input ->
+                    response.body.byteStream().use { input ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                         var read: Int
                         while (input.read(buffer).also { read = it } >= 0) {
@@ -177,7 +182,7 @@ object DesktopDownloadManager {
                         }
                     }
                 }
-            } finally { connection.disconnect() }
+            }
             if (total == null || position >= total) break
         }
         check(Files.size(temporary) > 0L) { "Video download failed: nothing was sent" }
@@ -244,6 +249,7 @@ object DesktopDownloadManager {
     }
 
     private const val HTTP_PARTIAL = 206
+    private const val HTTP_OK = 200
     private const val DOWNLOAD_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
