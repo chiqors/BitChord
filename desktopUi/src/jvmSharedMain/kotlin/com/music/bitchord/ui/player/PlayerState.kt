@@ -39,7 +39,11 @@ import kotlinx.coroutines.launch
  * null — a miss is the normal answer.
  */
 @Composable
-internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
+internal fun rememberCanvasArtwork(
+    song: Song,
+    preferYouTubeVideo: Boolean = false,
+    forceStaticArtwork: Boolean = false,
+): CanvasArtwork? {
     val canvasEnabled by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by PlayerSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val prioritizeSpotifyCanvas by PlayerSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
@@ -56,7 +60,24 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
     // clean; the same-titled-impostor case is guarded where the clip is
     // adopted, by [CanvasArtwork.matches].
     var canvas by remember(song.title, song.artist) { mutableStateOf<CanvasArtwork?>(null) }
-    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas) {
+    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas, preferYouTubeVideo, forceStaticArtwork) {
+        if (forceStaticArtwork) {
+            canvas = null
+            return@LaunchedEffect
+        }
+        if (preferYouTubeVideo && song.isVideo) {
+            val url = PlayerPlatform.host.videoFor(song)
+            if (url != null) {
+                canvas = CanvasArtwork(
+                    url = url,
+                    videoId = song.videoId,
+                    title = song.title,
+                    artist = song.artist,
+                    album = song.albumName,
+                )
+                return@LaunchedEffect
+            }
+        }
         if (!canvasAllowedNow) {
             canvas = null
             return@LaunchedEffect
@@ -84,7 +105,7 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
         canvas = PlayerPlatform.host.canvasFor(song) ?: canvas
     }
 
-    return canvas
+    return if (forceStaticArtwork) null else canvas
 }
 
 /**

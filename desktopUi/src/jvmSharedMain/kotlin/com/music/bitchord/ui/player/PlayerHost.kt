@@ -37,9 +37,16 @@ interface PlayerHost {
     /** Looks a Canvas up for [song]; null is the normal answer. */
     suspend fun canvasFor(song: Song): CanvasArtwork?
 
+    /** Resolves a playable video URL for [song]; null means fall back to the audio-only path. */
+    suspend fun videoFor(song: Song): String? = null
+
     /** The looping clip over the cover, decoded however this platform decodes video. */
     @Composable
     fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier)
+
+    /** Full YouTube video surface, used when the user opts into the video rendition. */
+    @Composable
+    fun YouTubeVideo(song: Song, modifier: Modifier) = Unit
 
     /**
      * Artwork for [song], resolving covers that live inside a remote file
@@ -265,6 +272,8 @@ enum class CanvasContentMode {
 class CanvasVideoSpec(
     val canvas: CanvasArtwork,
     val isPlaying: Boolean,
+    /** Current audio playhead, used by video-capable hosts to resynchronize frames after seeks. */
+    val playbackPositionMs: Long,
     val contentMode: CanvasContentMode,
     val alignPortraitTop: Boolean,
     val onAspectRatioChanged: (Float) -> Unit,
@@ -288,6 +297,7 @@ class CanvasVideoSpec(
 fun CanvasArtworkPlayer(
     canvas: CanvasArtwork,
     isPlaying: Boolean,
+    playbackPositionMs: Long = 0L,
     modifier: Modifier = Modifier,
     contentMode: CanvasContentMode = CanvasContentMode.CROP,
     alignPortraitTop: Boolean = false,
@@ -307,6 +317,7 @@ fun CanvasArtworkPlayer(
         CanvasVideoSpec(
             canvas = canvas,
             isPlaying = isPlaying,
+            playbackPositionMs = playbackPositionMs,
             contentMode = contentMode,
             alignPortraitTop = alignPortraitTop,
             onAspectRatioChanged = onAspectRatioChanged,

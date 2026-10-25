@@ -656,6 +656,8 @@ fun NowPlayingScreen(
     /** A version switch (video vs audio-only), triggered from the player's
      * menu, is fetching and measuring the target cut. */
     audioVersionSwitching: Boolean,
+    /** Desktop opts into the YouTube video presentation for video renditions. */
+    preferYouTubeVideo: Boolean = false,
     /** Suppresses motion artwork / Spotify Canvas / YouTube video presentation. */
     forceStaticArtwork: Boolean = false,
     /** The player has just swapped this item to a higher-quality source. */
@@ -808,7 +810,11 @@ fun NowPlayingScreen(
     // track" check lives.
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
-    val canvas = rememberCanvasArtwork(song, forceStaticArtwork = forceStaticArtwork)
+    val canvas = rememberCanvasArtwork(
+        song,
+        preferYouTubeVideo = preferYouTubeVideo,
+        forceStaticArtwork = forceStaticArtwork,
+    )
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and
