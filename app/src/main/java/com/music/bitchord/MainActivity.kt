@@ -240,6 +240,8 @@ import com.music.bitchord.ui.components.BottomTab
 import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
 import com.music.bitchord.ui.components.GlassNavBar
+import com.music.bitchord.ui.player.AndroidPlayerHost
+import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.ui.components.floatingtabbar.rememberFloatingTabBarScrollConnection
 import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.LastfmLoginAlert
@@ -918,6 +920,14 @@ private fun BitChordApp(
         }
     }
     val controller = rememberMediaController()
+    // The shared player host owns presentation, while the service owns the
+    // actual ExoPlayer. Keep the same controller attached as it becomes ready.
+    DisposableEffect(controller) {
+        (PlayerPlatform.host as? AndroidPlayerHost)?.bindMediaController(controller)
+        onDispose {
+            (PlayerPlatform.host as? AndroidPlayerHost)?.bindMediaController(null)
+        }
+    }
     val player = rememberPlayerState(controller)
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
@@ -986,6 +996,7 @@ private fun BitChordApp(
     }
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
+    val showYouTubeVideo by AppSettings.showYouTubeVideo.collectAsStateWithLifecycle()
     // A conversion is deliberately scoped to the current listening session.
     // Keeping the complete original row here lets Revert restore the exact
     // video upload, including its title and playlist identity, rather than
@@ -1875,6 +1886,7 @@ private fun BitChordApp(
                 title = item.title,
                 artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                 thumbnailUrl = item.thumbnailUrl,
+                isVideo = item.isVideo,
             )
         }
     }
@@ -2302,6 +2314,7 @@ private fun BitChordApp(
             position = player.position,
             durationMs = player.durationMs,
             audioVersionSwitching = switchingAudioVersion,
+            forceStaticArtwork = !showYouTubeVideo,
             qualityUpgraded = player.isQualityUpgraded,
             onPlayPause = {
                 togglePlayPause()
@@ -3101,6 +3114,7 @@ private fun BitChordApp(
                                                     title = item.title,
                                                     artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                                                     thumbnailUrl = item.thumbnailUrl,
+                                                    isVideo = item.isVideo,
                                                 ),
                                                 QueueSource(
                                                     category.title,
@@ -4337,6 +4351,13 @@ private fun BitChordApp(
                 upgradeQualityInProgress = fromPlayer && song.videoId in qualityUpgradesInFlight,
                 onToggleAudioVersion = onToggleVersion,
                 isAudioVersion = menuIsAudioVersion,
+                onToggleVideoPresentation = if (fromPlayer && song.isVideo) {
+                    {
+                        AppSettings.setShowYouTubeVideo(!AppSettings.showYouTubeVideo.value)
+                        songActions = null
+                    }
+                } else null,
+                videoPresentationVisible = showYouTubeVideo,
                 // Hidden outright when there's no real YouTube id behind
                 // this row to build a link from — SongActionsSheet already
                 // drops it for a local file via `isOffline`, this catches
